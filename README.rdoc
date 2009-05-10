@@ -1,0 +1,7 @@
+= qbedit
+
+Description goes here.
+
+== Copyright
+
+Copyright (c) 2009 Ben Booth. See LICENSE for details.
