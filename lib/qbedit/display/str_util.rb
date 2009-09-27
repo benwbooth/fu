@@ -1,4 +1,3 @@
-require 'test/unit'
 $VERBOSE=true
 
 module StrUtil
