@@ -1,45 +1,45 @@
-#!/usr/bin/ruby
+#!/usr/bin/ruby1.9.1
 
+require 'rubygems'
 require 'ncurses'
 require 'getoptlong'
 require 'rdoc/usage'
 
-require 'qbedit/event'
+require 'qbedit/display/raw_display'
 
 class Qbedit
-  def initialize()
+  def initialize
   end
-  def command_line()
+  def command_line
     opts = GetoptLong.new(
       ['--help', '-h', GetoptLong::NO_ARGUMENT],
     )
   end
+  def demo
+    
+  end
 end
 
 begin
-
   # instantiate main object
-  qbedit = Qbedit.new()
-  qbedit.command_line();
+  qbedit = Qbedit.new
+  qbedit.command_line
 
   # perform screen initialization
-  scr = Ncurses.initscr()
-  Ncurses.raw()
-  Ncurses.noecho()
+  scr = Ncurses.initscr
+  Ncurses.raw
+  Ncurses.noecho
   Ncurses.keypad(scr, true)
-
-  # load configuration files
-  require '/etc/qbeditrc' if File.exist?('/etc/qbeditrc')
-  require '~/.qbeditrc' if File.exist?('~/.qbeditrc')
-
+  qbedit.demo
   # start main event loop
-  qbedit.event_loop()
-
+  qbedit.event_loop
 ensure
   # restore screen
-  Ncurses.echo()
-  Ncurses.noraw()
-  Ncurses.nl()
-  Ncurses.endwin()
+  Ncurses.echo
+  Ncurses.noraw
+  Ncurses.nl
+  Ncurses.endwin
 end
+
+exit 0
 
