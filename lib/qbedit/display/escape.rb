@@ -2,7 +2,6 @@
 $VERBOSE=true
 
 module Escape
-
   SO = "\x0e"
   SI = "\x0f"
   DEC_TAG="0"
@@ -10,9 +9,11 @@ module Escape
   ALT_DEC_SPECIAL_CHARS="`afgjklmnopqrstuvwxyz{|}~"
   DEC_SPECIAL_CHARMAP = {}
 
-  raise DEC_SPECIAL_CHARS.to_s+','+ALT_DEC_SPECIAL_CHARS.to_s unless DEC_SPECIAL_CHARS.length == ALT_DEC_SPECIAL_CHARS.length
+  raise DEC_SPECIAL_CHARS.to_s+','+ALT_DEC_SPECIAL_CHARS.to_s \
+    unless DEC_SPECIAL_CHARS.length == ALT_DEC_SPECIAL_CHARS.length
     
-  [1,2].zip(DEC_SPECIAL_CHARS, ALT_DEC_SPECIAL_CHARS).each { |a|
+  [1,2].zip(DEC_SPECIAL_CHARS.split(''), 
+            ALT_DEC_SPECIAL_CHARS.split('')).each { |a|
      c, alt = *a
      DEC_SPECIAL_CHARMAP[c.ord] = SO+alt+SI
   }
@@ -22,7 +23,7 @@ module Escape
   class MoreInputRequired < Exception
   end
 
-  def escape_modifier(digit)
+  def self.escape_modifier(digit)
     mode = digit.ord - "1".ord
     return 'shift '*(mode&1)+'meta '*((mode&2)/2)+'ctrl '*((mode&4)/4)
   end
@@ -56,7 +57,7 @@ module Escape
       letter, key = *a
       '12345678'.split('').each { |digit| 
         ['[','[1;'].each { |prefix|
-          [prefix+digit+letter, escape_modifier(digit)+key]
+          [prefix+digit+letter.to_s, self.escape_modifier(digit)+key]
         }
       }
     }
@@ -65,7 +66,7 @@ module Escape
     [1,2].zip('PQRS'.split(''), ['f1','f2','f3','f4']).each {|a|
       letter,key = *a
       '12345678'.split('').each {|digit|
-        ['0'+digit+letter, escape_modifier(digit)+key]
+        ['0'+digit+letter.to_s, self.escape_modifier(digit)+key]
       }
     }
   ] + [
@@ -76,7 +77,7 @@ module Escape
       each { |a|
         num,key = *a
         "12345678".split('').each { |digit|
-          ['['+num.to_s+';'+digit+'~', escape_modifier(digit)+key]
+          ['['+num.to_s+';'+digit+'~', escape_modifier(digit)+key.to_s]
       }
     }
   ] + [
@@ -108,7 +109,7 @@ module Escape
         root[s[0].ord] = d
         return add(d, s[1..s.length-1], result)
       end
-      root[s.ord] = result
+      root[s[0].ord] = result
     end
 
     def get(keys, more_available)
@@ -243,7 +244,7 @@ module Escape
   MOUSE_DRAG_FLAG = 32
 
   # Build the input trie from input_sequences list
-  input_trie = KeyqueueTrie(input_sequences)
+  input_trie = KeyqueueTrie.new(input_sequences)
 
   _keyconv = {
 	  -1 => nil,

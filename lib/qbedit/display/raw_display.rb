@@ -1,4 +1,3 @@
-#!/usr/bin/python
 #
 # Urwid raw display module
 #    Copyright (C) 2004-2009  Ian Ward
@@ -19,846 +18,981 @@
 #
 # Urwid web site: http://excess.org/urwid/
 
-"""
-Direct terminal UI implementation
-"""
+# Direct terminal UI implementation
 
-import fcntl
-import termios
-import os
-import select
-import struct
-import sys
-import tty
-import signal
+require 'termios'
+require 'pty'
+require 'fcntl'
+require 'signal'
+require 'process'
+require 'fiber'
 
-import util
-import escape
-from display_common import *
-import signals
+require 'str_util'
+require 'util'
+require 'escape'
+require 'display_common'
 
-try:
-    # python >= 2.4
-    from subprocess import Popen, PIPE
-except ImportError:
-    Popen = None
+module RawDisplay
+
+# Indexes for termios list.
+IFLAG = 0
+OFLAG = 1
+CFLAG = 2
+LFLAG = 3
+ISPEED = 4
+OSPEED = 5
+CC = 6
 
 # replace control characters with ?'s
-_trans_table = "?"*32+"".join([chr(x) for x in range(32,256)])
+_trans_table = (32..256).map {|_| _.chr}.join("?"*32+"")
 
-class ScreenError(Exception):
-    pass
+class ScreenError < Exception
+end
 
-class Screen(BaseScreen, RealTerminal):
-    def __init__(self):
-        """Initialize a screen that directly prints escape codes to an output
-        terminal.
-        """
-        super(Screen, self).__init__()
-        self._pal_escape = {}
-        signals.connect_signal(self, UPDATE_PALETTE_ENTRY, 
-            self._on_update_palette_entry)
-        self.colors = 16 # FIXME: detect this
-        self.has_underline = True # FIXME: detect this
-        self.register_palette_entry( None, 'default','default')
-        self._keyqueue = []
-        self.prev_input_resize = 0
-        self.set_input_timeouts()
-        self.screen_buf = None
-        self._resized = False
-        self.maxrow = None
-        self.gpm_mev = None
-        self.gpm_event_pending = False
-        self.last_bstate = 0
-        self._setup_G1_done = False
-        self._rows_used = None
-        self._cy = 0
-        self._started = False
-        self.bright_is_bold = os.environ.get('TERM',None) != "xterm"
-        self._next_timeout = None
-        self._term_output_file = sys.stdout
-        self._term_input_file = sys.stdin
+class Screen < BaseScreen
+    def initialize
+        # Initialize a screen that directly prints escape codes to an output
+        # terminal.
+        super
+        @_pal_escape = {}
+        #signals.connect_signal(UPDATE_PALETTE_ENTRY, 
+        #    _on_update_palette_entry)
+        @colors = 256 # FIXME: detect this
+        @has_underline = true # FIXME: detect this
+        register_palette_entry( nil, 'default','default')
+        @_keyqueue = []
+        @prev_input_resize = 0
+        set_input_timeouts()
+        @screen_buf = nil
+        @_resized = false
+        @maxrow = nil
+        @gpm_mev = nil
+        @gpm_event_pending = false
+        @last_bstate = 0
+        @_setup_G1_done = false
+        @_rows_used = nil
+        @_cy = 0
+        @_started = false
+        @bright_is_bold = !ENV['TERM'].include?('xterm')
+        @_next_timeout = nil
+        @_term_output_file = $stdout
+        @_term_input_file = $stdin
         # pipe for signalling external event loops about resize events
-        self._resize_pipe_rd, self._resize_pipe_wr = os.pipe()
-        fcntl.fcntl(self._resize_pipe_rd, fcntl.F_SETFL, os.O_NONBLOCK)
+        @_resize_pipe_rd, @_resize_pipe_wr = IO.pipe
+        @_resize_pipe_rd.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK);
+    end
 
-    started = property(lambda self: self._started)
+    def started
+      @_started
+    end
 
-    def _on_update_palette_entry(self, name, *attrspecs):
+    def _on_update_palette_entry(name, *attrspecs)
         # copy the attribute to a dictionary containing the escape seqences
-        self._pal_escape[name] = self._attrspec_to_escape(
-            attrspecs[{16:0,1:1,88:2,256:3}[self.colors]])
+        @_pal_escape[name] = _attrspec_to_escape(
+            attrspecs[{16=>0,1=>1,88=>2,256=>3}[@colors]])
+    end
 
-    def set_input_timeouts(self, max_wait=None, complete_wait=0.125, 
-        resize_wait=0.125):
-        """
-        Set the get_input timeout values.  All values are in floating
-        point numbers of seconds.
-        
-        max_wait -- amount of time in seconds to wait for input when
-            there is no input pending, wait forever if None
-        complete_wait -- amount of time in seconds to wait when
-            get_input detects an incomplete escape sequence at the
-            end of the available input
-        resize_wait -- amount of time in seconds to wait for more input
-            after receiving two screen resize requests in a row to
-            stop Urwid from consuming 100% cpu during a gradual
-            window resize operation
-        """
-        self.max_wait = max_wait
-        if max_wait is not None:
-            if self._next_timeout is None:
-                self._next_timeout = max_wait
-            else:
-                self._next_timeout = min(self._next_timeout, self.max_wait)
-        self.complete_wait = complete_wait
-        self.resize_wait = resize_wait
+    def set_input_timeouts(max_wait=nil, complete_wait=0.125, 
+        resize_wait=0.125)
+        # Set the get_input timeout values.  All values are in floating
+        # point numbers of seconds.
+        # 
+        # max_wait -- amount of time in seconds to wait for input when
+        #     there is no input pending, wait forever if nil
+        # complete_wait -- amount of time in seconds to wait when
+        #     get_input detects an incomplete escape sequence at the
+        #     end of the available input
+        # resize_wait -- amount of time in seconds to wait for more input
+        #     after receiving two screen resize requests in a row to
+        #     stop Urwid from consuming 100% cpu during a gradual
+        #     window resize operation
 
-    def _sigwinch_handler(self, signum, frame):
-        if not self._resized:
-            os.write(self._resize_pipe_wr, 'R')
-        self._resized = True
-        self.screen_buf = None
+        @max_wait = max_wait
+        if not max_wait.nil?
+            if @_next_timeout.nil?
+                @_next_timeout = max_wait
+            else
+                @_next_timeout = min(@_next_timeout, @max_wait)
+            end
+        end
+        @complete_wait = complete_wait
+        @resize_wait = resize_wait
+    end
+
+    def _sigwinch_handler(signum, frame)
+        if not @_resized
+            @_resize_pipe_wr.write('R')
+        end
+        @_resized = true
+        @screen_buf = nil
+    end
       
-    def signal_init(self):
-        """
-        Called in the startup of run wrapper to set the SIGWINCH 
-        signal handler to self._sigwinch_handler.
+    def signal_init
+        # Called in the startup of run wrapper to set the SIGWINCH 
+        # signal handler to @_sigwinch_handler.
 
-        Override this function to call from main thread in threaded
-        applications.
-        """
-        signal.signal(signal.SIGWINCH, self._sigwinch_handler)
+        # Override this function to call from main thread in threaded
+        # applications.
+
+        Signal.trap('WINCH') do 
+          _sigwinch_handler
+        end
+    end
     
-    def signal_restore(self):
-        """
-        Called in the finally block of run wrapper to restore the
-        SIGWINCH handler to the default handler.
+    def signal_restore
+        # Called in the finally block of run wrapper to restore the
+        # SIGWINCH handler to the default handler.
 
-        Override this function to call from main thread in threaded
-        applications.
-        """
-        signal.signal(signal.SIGWINCH, signal.SIG_DFL)
+        # Override this function to call from main thread in threaded
+        # applications.
+
+        Signal.trap('WINCH', 'SIG_DFL')
+    end
       
-    def set_mouse_tracking(self):
-        """
-        Enable mouse tracking.  
-        
-        After calling this function get_input will include mouse
-        click events along with keystrokes.
-        """
-        self._term_output_file.write(escape.MOUSE_TRACKING_ON)
+    def set_mouse_tracking
+        # Enable mouse tracking.  
+        # 
+        # After calling this function get_input will include mouse
+        # click events along with keystrokes.
 
-        self._start_gpm_tracking()
-    
-    def _start_gpm_tracking(self):
-        if not os.path.isfile("/usr/bin/mev"):
-            return
-        if not os.environ.get('TERM',"").lower().startswith("linux"):
-            return
-        if not Popen:
-            return
-        m = Popen(["/usr/bin/mev","-e","158"], stdin=PIPE, stdout=PIPE,
-            close_fds=True)
-        fcntl.fcntl(m.stdout.fileno(), fcntl.F_SETFL, os.O_NONBLOCK)
-        self.gpm_mev = m
-    
-    def _stop_gpm_tracking(self):
-        os.kill(self.gpm_mev.pid, signal.SIGINT)
-        os.waitpid(self.gpm_mev.pid, 0)
-        self.gpm_mev = None
-    
-    def start(self, alternate_buffer=True):
-        """
-        Initialize the screen and input mode.
-        
-        alternate_buffer -- use alternate screen buffer
-        """
-        assert not self._started
-        if alternate_buffer:
-            self._term_output_file.write(escape.SWITCH_TO_ALTERNATE_BUFFER)
-            self._rows_used = None
-        else:
-            self._rows_used = 0
-        self._old_termios_settings = termios.tcgetattr(0)
-        self.signal_init()
-        tty.setcbreak(self._term_input_file.fileno())
-        self._alternate_buffer = alternate_buffer
-        self._input_iter = self._run_input_iter()
-        self._next_timeout = self.max_wait
-        
-        if not self._signal_keys_set:
-            self._old_signal_keys = self.tty_signal_keys()
+        @_term_output_file.write(escape.MOUSE_TRACKING_ON)
 
-        self._started = True
-
+        _start_gpm_tracking()
+    end
     
-    def stop(self):
-        """
-        Restore the screen.
-        """
-        self.clear()
-        if not self._started:
+    def _start_gpm_tracking
+        if !File.exists? "/usr/bin/mev"
             return
-        self.signal_restore()
-        termios.tcsetattr(0, termios.TCSADRAIN, 
-            self._old_termios_settings)
+        end
+        if not (ENV['TERM']||'').downcase().start_with? "linux"
+            return
+        end
+        if not IO.respond_to? 'popen'
+            return
+        end
+        m = IO.popen(["/usr/bin/mev","-e","158"])
+        m.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK)
+        @gpm_mev = m
+    end
+    
+    def _stop_gpm_tracking
+        Process.kill(signal.SIGINT, @gpm_mev.pid)
+        Process.waitpid(@gpm_mev.pid, 0)
+        @gpm_mev = nil
+    end
+
+    def setraw(io, _when=Termios::TCSAFLUSH)
+        # Put terminal into a raw mode.
+        mode = Termios.tcgetattr(io)
+        mode.iflag |= ~(Termios::BRKINT | Termios::ICRNL | Termios::INPCK | 
+                        Termios::ISTRIP | Termios::IXON)
+        mode.oflag &= ~(Termios::OPOST)
+        mode.cflag |= ~(Termios::CSIZE | Termios::PARENB)
+        mode.cflag |= Termios::CS8
+        mode.lflag &= ~(Termios::ECHO | Termios::ICANON | Termios::IEXTEN | 
+                        Termios::ISIG)
+        mode.cc.vmin = 1
+        mode.cc.vtime = 0
+        Termios.tcsetattr(io, _when, mode)
+    end
+
+    def setcbreak(io, _when=Termios::TCSAFLUSH)
+        # Put terminal into a cbreak mode.
+        mode = tcgetattr(io)
+        mode.lflag &= ~(Termios::ECHO | Termios::ICANON)
+        mode.cc.vmin = 1
+        mode.cc.vtime = 0
+        Termios.tcsetattr(io, _when, mode)
+    end
+
+    def start(alternate_buffer=true)
+        # Initialize the screen and input mode.
+        # 
+        # alternate_buffer -- use alternate screen buffer
+      
+        raise if @_started
+        if alternate_buffer
+            @_term_output_file.write(Escape::SWITCH_TO_ALTERNATE_BUFFER)
+            @_rows_used = nil
+        else
+            @_rows_used = 0
+        end
+
+        @_old_termios_settings = Termios.tcgetattr(0)
+        signal_init()
+        setcbreak(@_term_input_file)
+        @_alternate_buffer = alternate_buffer
+        @_input_iter = @_run_input_iter.resume
+        @_next_timeout = @max_wait
+        
+        if !@_signal_keys_set
+            @_old_signal_keys = tty_signal_keys()
+        end
+
+        @_started = true
+    end
+    
+    def stop
+        # Restore the screen.
+
+        clear()
+        if !@_started
+            return
+        end
+        signal_restore()
+        Termios.tcsetattr(0, Termios::TCSADRAIN, 
+            @_old_termios_settings)
         move_cursor = ""
-        if self.gpm_mev:
-            self._stop_gpm_tracking()
-        if self._alternate_buffer:
-            move_cursor = escape.RESTORE_NORMAL_BUFFER
-        elif self.maxrow is not None:
-            move_cursor = escape.set_cursor_position( 
-                0, self.maxrow)
-        self._term_output_file.write(self._attrspec_to_escape(AttrSpec('','')) 
-            + escape.SI
-            + escape.MOUSE_TRACKING_OFF
-            + escape.SHOW_CURSOR
-            + move_cursor + "\n" + escape.SHOW_CURSOR )
-        self._input_iter = self._fake_input_iter()
+        if @gpm_mev
+            _stop_gpm_tracking()
+        end
+        if @_alternate_buffer
+            move_cursor = Escape::RESTORE_NORMAL_BUFFER
+        elsif !@maxrow.nil?
+            move_cursor = Escape.set_cursor_position(0, @maxrow)
+        end
 
-        if self._old_signal_keys:
-            self.tty_signal_keys(*self._old_signal_keys)
+        @_term_output_file.write(_attrspec_to_escape(AttrSpec('',''))+
+            Escape::SI+
+            Escape::MOUSE_TRACKING_OFF+
+            Escape::SHOW_CURSOR+
+            move_cursor + "\n" + Escape::SHOW_CURSOR )
+        @_input_iter = @_fake_input_iter.resume
+
+        if @_old_signal_keys
+            tty_signal_keys(*@_old_signal_keys)
+        end
         
-        self._started = False
+        @_started = false
+    end
         
+    def run_wrapper(fn, alternate_buffer=true)
+        # Call start to initialize screen, then call fn.  
+        # When fn exits call stop to restore the screen to normal.
 
-    def run_wrapper(self, fn, alternate_buffer=True):
-        """
-        Call start to initialize screen, then call fn.  
-        When fn exits call stop to restore the screen to normal.
+        # alternate_buffer -- use alternate screen buffer and restore
+        #     normal screen buffer on exit
 
-        alternate_buffer -- use alternate screen buffer and restore
-            normal screen buffer on exit
-        """
-        try:
-            self.start(alternate_buffer)
+        begin
+            start(alternate_buffer)
             return fn()
-        finally:
-            self.stop()
+        ensure 
+            stop()
+        end
+    end
             
-    def get_input(self, raw_keys=False):
-        """Return pending input as a list.
+    def get_input(raw_keys=false)
+        # Return pending input as a list.
 
-        raw_keys -- return raw keycodes as well as translated versions
+        # raw_keys -- return raw keycodes as well as translated versions
 
-        This function will immediately return all the input since the
-        last time it was called.  If there is no input pending it will
-        wait before returning an empty list.  The wait time may be
-        configured with the set_input_timeouts function.
+        # This function will immediately return all the input since the
+        # last time it was called.  If there is no input pending it will
+        # wait before returning an empty list.  The wait time may be
+        # configured with the set_input_timeouts function.
 
-        If raw_keys is False (default) this function will return a list
-        of keys pressed.  If raw_keys is True this function will return
-        a ( keys pressed, raw keycodes ) tuple instead.
+        # If raw_keys is false (default) this function will return a list
+        # of keys pressed.  If raw_keys is true this function will return
+        # a ( keys pressed, raw keycodes ) tuple instead.
+        # 
+        # Examples of keys returned
+        # -------------------------
+        # ASCII printable characters:  " ", "a", "0", "A", "-", "/" 
+        # ASCII control characters:  "tab", "enter"
+        # Escape sequences:  "up", "page up", "home", "insert", "f1"
+        # Key combinations:  "shift f1", "meta a", "ctrl b"
+        # Window events:  "window resize"
+        # 
+        # When a narrow encoding is not enabled
+        # "Extended ASCII" characters:  "\\xa1", "\\xb2", "\\xfe"
+
+        # When a wide encoding is enabled
+        # Double-byte characters:  "\\xa1\\xea", "\\xb2\\xd4"
+
+        # When utf8 encoding is enabled
+        # Unicode characters: u"\\u00a5", u'\\u253c"
+        # 
+        # Examples of mouse events returned
+        # ---------------------------------
+        # Mouse button press: ('mouse press', 1, 15, 13), 
+        #                     ('meta mouse press', 2, 17, 23)
+        # Mouse drag: ('mouse drag', 1, 16, 13),
+        #             ('mouse drag', 1, 17, 13),
+        #         ('ctrl mouse drag', 1, 18, 13)
+        # Mouse button release: ('mouse release', 0, 18, 13),
+        #                       ('ctrl mouse release', 0, 17, 23)
+
+        raise if !@_started
         
-        Examples of keys returned
-        -------------------------
-        ASCII printable characters:  " ", "a", "0", "A", "-", "/" 
-        ASCII control characters:  "tab", "enter"
-        Escape sequences:  "up", "page up", "home", "insert", "f1"
-        Key combinations:  "shift f1", "meta a", "ctrl b"
-        Window events:  "window resize"
-        
-        When a narrow encoding is not enabled
-        "Extended ASCII" characters:  "\\xa1", "\\xb2", "\\xfe"
-
-        When a wide encoding is enabled
-        Double-byte characters:  "\\xa1\\xea", "\\xb2\\xd4"
-
-        When utf8 encoding is enabled
-        Unicode characters: u"\\u00a5", u'\\u253c"
-        
-        Examples of mouse events returned
-        ---------------------------------
-        Mouse button press: ('mouse press', 1, 15, 13), 
-                            ('meta mouse press', 2, 17, 23)
-        Mouse drag: ('mouse drag', 1, 16, 13),
-                    ('mouse drag', 1, 17, 13),
-                ('ctrl mouse drag', 1, 18, 13)
-        Mouse button release: ('mouse release', 0, 18, 13),
-                              ('ctrl mouse release', 0, 17, 23)
-        """
-        assert self._started
-        
-        self._wait_for_input_ready(self._next_timeout)
-        self._next_timeout, keys, raw = self._input_iter.next()
+        _wait_for_input_ready(@_next_timeout)
+        @_next_timeout, keys, raw = @_input_iter.next
         
         # Avoid pegging CPU at 100% when slowly resizing
-        if keys==['window resize'] and self.prev_input_resize:
-            while True:
-                self._wait_for_input_ready(self.resize_wait)
-                self._next_timeout, keys, raw2 = \
-                    self._input_iter.next()
+        if keys == ['window resize'] && @prev_input_resize
+            while true
+                _wait_for_input_ready(@resize_wait)
+                @_next_timeout, keys, raw2 = @_input_iter.next
                 raw += raw2
-                #if not keys:
-                #    keys, raw2 = self._get_input( 
-                #        self.resize_wait)
+                #if !keys
+                #    keys, raw2 = @_get_input(@resize_wait)
                 #    raw += raw2
-                if keys!=['window resize']:
+                #end
+                if keys != ['window resize']
                     break
-            if keys[-1:]!=['window resize']:
-                keys.append('window resize')
+                end
+            end
+            if keys[-1] != 'window resize'
+                keys << 'window resize'
+            end
+        end
                 
-        if keys==['window resize']:
-            self.prev_input_resize = 2
-        elif self.prev_input_resize == 2 and not keys:
-            self.prev_input_resize = 1
-        else:
-            self.prev_input_resize = 0
+        if keys == ['window resize']
+            @prev_input_resize = 2
+        elsif @prev_input_resize == 2 && !keys
+            @prev_input_resize = 1
+        else
+            @prev_input_resize = 0
+        end
         
-        if raw_keys:
+        if raw_keys
             return keys, raw
+        end
         return keys
+    end
 
-    def get_input_descriptors(self):
-        """
-        Return a list of integer file descriptors that should be
-        polled in external event loops to check for user input.
+    def get_input_descriptors
+        # Return a list of integer file descriptors that should be
+        # polled in external event loops to check for user input.
 
-        Use this method if you are implementing yout own event loop.
-        """
-        fd_list = [self._term_input_file.fileno(), self._resize_pipe_rd]
-        if self.gpm_mev is not None:
-            fd_list.append(self.gpm_mev.stdout.fileno())
+        # Use this method if you are implementing yout own event loop.
+
+        fd_list = [@_term_input_file, @_resize_pipe_rd]
+        if not @gpm_mev.nil?
+            fd_list << @gpm_mev.stdout
+        end
         return fd_list
+    end
         
-    def get_input_nonblocking(self):
-        """
-        Return a (next_input_timeout, keys_pressed, raw_keycodes) 
-        tuple.
+    def get_input_nonblocking
+        # Return a (next_input_timeout, keys_pressed, raw_keycodes) 
+        # tuple.
 
-        Use this method if you are implementing your own event loop.
-        
-        When there is input waiting on one of the descriptors returned
-        by get_input_descriptors() this method should be called to
-        read and process the input.
+        # Use this method if you are implementing your own event loop.
+        # 
+        # When there is input waiting on one of the descriptors returned
+        # by get_input_descriptors() this method should be called to
+        # read and process the input.
 
-        This method expects to be called in next_input_timeout seconds
-        (a floating point number) if there is no input waiting.
-        """
-        assert self._started
+        # This method expects to be called in next_input_timeout seconds
+        # (a floating point number) if there is no input waiting.
 
-        return self._input_iter.next()
+        raise if !@_started
+        return @_input_iter.next()
+    end
 
-    def _run_input_iter(self):
-        def empty_resize_pipe():
+    @_run_input_iter = Fiber.new do
+        def empty_resize_pipe
             # clean out the pipe used to signal external event loops
             # that a resize has occured
-            try:
-                while True: os.read(self._resize_pipe_rd, 1)
-            except OSError:
-                pass
+            while !@_resize_pipe_rd.read(1).nil?
+            end
+        end
 
-        while True:
+        while true
             processed = []
-            codes = self._get_gpm_codes() + \
-                self._get_keyboard_codes()
+            codes = _get_gpm_codes() + _get_keyboard_codes()
 
             original_codes = codes
-            try:
-                while codes:
-                    run, codes = escape.process_keyqueue(
-                        codes, True)
-                    processed.extend(run)
-            except escape.MoreInputRequired:
-                k = len(original_codes) - len(codes)
-                yield (self.complete_wait, processed,
-                    original_codes[:k])
+            begin
+                while codes
+                    run, codes = Escape.process_keyqueue(codes, true)
+                    processed += run
+                end
+            rescue Escape::MoreInputRequired
+                k = original_codes.length - codes.length
+                Fiber.yield(@complete_wait, processed, original_codes[0..k-1])
                 empty_resize_pipe()
                 original_codes = codes
                 processed = []
 
-                codes += self._get_keyboard_codes() + \
-                    self._get_gpm_codes()
-                while codes:
-                    run, codes = escape.process_keyqueue(
-                        codes, False)
+                codes += _get_keyboard_codes() + _get_gpm_codes()
+                while codes
+                    run, codes = Escape.process_keyqueue(codes, false)
                     processed.extend(run)
+                end
+            end
             
-            if self._resized:
+            if @_resized
                 processed.append('window resize')
-                self._resized = False
+                @_resized = false
+            end
 
-            yield (self.max_wait, processed, original_codes)
+            Fiber.yield(@max_wait, processed, original_codes)
             empty_resize_pipe()
+        end
+    end
 
-    def _fake_input_iter(self):
-        """
-        This generator is a placeholder for when the screen is stopped
-        to always return that no input is available.
-        """
-        while True:
-            yield (self.max_wait, [], [])
+    @_fake_input_iter = Fiber.new do
+        # This generator is a placeholder for when the screen is stopped
+        # to always return that no input is available.
 
-    def _get_keyboard_codes(self):
+        while true
+            Fiber.yield(@max_wait, [], [])
+        end
+    end
+
+    def _get_keyboard_codes
         codes = []
-        while True:
-            code = self._getch_nodelay()
-            if code < 0:
+        while true
+            code = _getch_nodelay()
+            if code < 0
                 break
-            codes.append(code)
+            end
+            codes << code
+        end
         return codes
+    end
 
-    def _get_gpm_codes(self):
+    def _get_gpm_codes
         codes = []
-        if self.gpm_mev is not None:
-            try:
-                while True:
-                    codes.extend(self._encode_gpm_event())
-            except IOError, e:
-                if e.args[0] != 11:
+        if not @gpm_mev.nil?
+            begin
+                while true
+                    codes += _encode_gpm_event()
+                end
+            rescue IOError, e
+                if e.args[0] != 11
                     raise
+                end
+            end
+        end
         return codes
+    end
 
-    def _wait_for_input_ready(self, timeout):
-        ready = None
-        fd_list = [self._term_input_file.fileno()]
-        if self.gpm_mev is not None:
-            fd_list += [ self.gpm_mev.stdout ]
-        while True:
-            try:
-                if timeout is None:
-                    ready,w,err = select.select(
-                        fd_list, [], fd_list)
-                else:
-                    ready,w,err = select.select(
-                        fd_list,[],fd_list, timeout)
+    def _wait_for_input_ready(timeout)
+        ready = nil
+        fd_list = [@_term_input_file]
+        if not @gpm_mev.nil?
+            fd_list << @gpm_mev.stdout
+        end
+        while true
+            begin
+                if timeout.nil?
+                    ready,w,err = *IO.select(fd_list, [], fd_list)
+                else
+                    ready,w,err = *IO.select(fd_list,[], fd_list, timeout)
+                end
                 break
-            except select.error, e:
-                if e.args[0] != 4: 
+            rescue IOError, e
+                if e.args[0] != 4
                     raise
-                if self._resized:
+                end
+                if @_resized
                     ready = []
                     break
+                end
+            end
+        end
         return ready    
+    end
         
-    def _getch(self, timeout):
-        ready = self._wait_for_input_ready(timeout)
-        if self.gpm_mev is not None:
-            if self.gpm_mev.stdout.fileno() in ready:
-                self.gpm_event_pending = True
-        if self._term_input_file.fileno() in ready:
-            return ord(os.read(self._term_input_file.fileno(), 1))
+    def _getch(timeout)
+        ready = _wait_for_input_ready(timeout)
+        if @gpm_mev.nil?
+            if ready.include? @gpm_mev.stdout
+                @gpm_event_pending = true
+            end
+        end
+        if ready.include? @_term_input_file
+            return @_term_input_file.read(1).ord
+        end
         return -1
+    end
     
-    def _encode_gpm_event( self ):
-        self.gpm_event_pending = False
-        s = self.gpm_mev.stdout.readline()
+    def _encode_gpm_event
+        @gpm_event_pending = false
+        s = @gpm_mev.stdout.gets
         l = s.split(",")
-        if len(l) != 6:
+        if l.length != 6
             # unexpected output, stop tracking
-            self._stop_gpm_tracking()
+            _stop_gpm_tracking()
             return []
-        ev, x, y, ign, b, m = s.split(",")
-        ev = int( ev.split("x")[-1], 16)
-        x = int( x.split(" ")[-1] )
-        y = int( y.lstrip().split(" ")[0] )
-        b = int( b.split(" ")[-1] )
-        m = int( m.split("x")[-1].rstrip(), 16 )
+        end
+        ev, x, y, ign, b, m = *s.split(",")
+        ev = ev.hex
+        x = x.split(" ")[-1].to_i
+        y = y.lstrip.split(" ")[0].to_i
+        b = b.split(" ")[-1].to_i
+        m = m.rstrip.hex
 
         # convert to xterm-like escape sequence
 
-        last = next = self.last_bstate
+        last = _next = @last_bstate
         l = []
         
         mod = 0
-        if m & 1:    mod |= 4 # shift
-        if m & 10:    mod |= 8 # alt
-        if m & 4:    mod |= 16 # ctrl
+        if m & 1
+          mod |= 4 # shift
+        end
+        if m & 10
+          mod |= 8 # alt
+        end
+        if m & 4
+          mod |= 16 # ctrl
+        end
 
-        def append_button( b ):
+        def append_button( b )
             b |= mod
-            l.extend([ 27, ord('['), ord('M'), b+32, x+32, y+32 ])
+            l += [ 27, '['.ord, 'M'.ord, b+32, x+32, y+32 ]
+        end
 
-        if ev == 20: # press
-            if b & 4 and last & 1 == 0:
+        if ev == 20 # press
+            if b & 4 and last & 1 == 0
                 append_button( 0 )
-                next |= 1
-            if b & 2 and last & 2 == 0:
+                _next |= 1
+            end
+            if b & 2 and last & 2 == 0
                 append_button( 1 )
-                next |= 2
-            if b & 1 and last & 4 == 0:
+                _next |= 2
+            end
+            if b & 1 and last & 4 == 0
                 append_button( 2 )
-                next |= 4
-        elif ev == 146: # drag
-            if b & 4:
-                append_button( 0 + escape.MOUSE_DRAG_FLAG )
-            elif b & 2:
-                append_button( 1 + escape.MOUSE_DRAG_FLAG )
-            elif b & 1:
-                append_button( 2 + escape.MOUSE_DRAG_FLAG )
-        else: # release
-            if b & 4 and last & 1:
-                append_button( 0 + escape.MOUSE_RELEASE_FLAG )
-                next &= ~ 1
-            if b & 2 and last & 2:
-                append_button( 1 + escape.MOUSE_RELEASE_FLAG )
-                next &= ~ 2
-            if b & 1 and last & 4:
-                append_button( 2 + escape.MOUSE_RELEASE_FLAG )
-                next &= ~ 4
+                _next |= 4
+            end
+        elsif ev == 146 # drag
+            if b & 4
+                append_button( 0 + Escape::MOUSE_DRAG_FLAG )
+            elsif b & 2
+                append_button( 1 + Escape::MOUSE_DRAG_FLAG )
+            elsif b & 1
+                append_button( 2 + Escape::MOUSE_DRAG_FLAG )
+            end
+        else # release
+            if b & 4 && last & 1
+                append_button( 0 + Escape::MOUSE_RELEASE_FLAG )
+                _next &= ~ 1
+            end
+            if b & 2 && last & 2
+                append_button( 1 + Escape::MOUSE_RELEASE_FLAG )
+                _next &= ~ 2
+            end
+            if b & 1 && last & 4
+                append_button( 2 + Escape::MOUSE_RELEASE_FLAG )
+                _next &= ~ 4
+            end
+        end
             
-        self.last_bstate = next
+        @last_bstate = _next
         return l
+    end
     
-    def _getch_nodelay(self):
-        return self._getch(0)
-    
-    
-    def get_cols_rows(self):
-        """Return the terminal dimensions (num columns, num rows)."""
-        buf = fcntl.ioctl(0, termios.TIOCGWINSZ, ' '*4)
-        y, x = struct.unpack('hh', buf)
-        self.maxrow = y
-        return x, y
+    def _getch_nodelay()
+        return _getch(0)
+    end
 
-    def _setup_G1(self):
-        """
-        Initialize the G1 character set to graphics mode if required.
-        """
-        if self._setup_G1_done:
+    def get_cols_rows
+      # Return the terminal dimensions (num columns, num rows).
+      begin
+        tty = File.open('/dev/tty', File::RDWR|File::NOCTTY)
+        tty.sync = true
+        buf = ' '*4
+        tty.ioctl(Termios::TIOCGWINSZ, buf)
+        size = [buf[0..1].unpack('v'), buf[2..3].unpack('v')]
+        tty.close
+      rescue IOError
+          size = [0,0]
+      end
+      if size[0] == 0
+          size[0] = ENV['LINES'].to_i
+      end
+      if size[1] == 0
+          size[1] = ENV['COLUMNS'].to_i
+      end
+      return *size
+    end
+    
+    def _setup_G1
+        # Initialize the G1 character set to graphics mode if required.
+
+        if @_setup_G1_done
             return
+        end
         
-        while True:
-            try:
-                self._term_output_file.write(escape.DESIGNATE_G1_SPECIAL)
-                self._term_output_file.flush()
+        while true
+            begin
+                @_term_output_file.write(Escape::DESIGNATE_G1_SPECIAL)
+                @_term_output_file.flush
                 break
-            except IOError, e:
-                pass
-        self._setup_G1_done = True
-
+            rescue IOError, e
+            end
+        end
+        @_setup_G1_done = true
+    end
     
-    def draw_screen(self, (maxcol, maxrow), r ):
-        """Paint screen with rendered canvas."""
-        assert self._started
+    def draw_screen(maxrowcol, r)
+        maxcol, maxrow = *maxrowcol
+        # Paint screen with rendered canvas.
+        raise unless @_started
+        raise unless maxrow == r.rows
 
-        assert maxrow == r.rows()
-
-        self._setup_G1()
+        _setup_G1()
         
-        if self._resized: 
+        if @_resized
             # handle resize before trying to draw screen
             return
+        end
         
-        o = [escape.HIDE_CURSOR, self._attrspec_to_escape(AttrSpec('',''))]
+        o = [escape.HIDE_CURSOR, _attrspec_to_escape(AttrSpec('',''))]
         
-        def partial_display():
-            # returns True if the screen is in partial display mode
+        def partial_display
+            # returns true if the screen is in partial display mode
             # ie. only some rows belong to the display
-            return self._rows_used is not None
+            return !@_rows_used.nil?
+        end
 
-        if not partial_display():
-            o.append(escape.CURSOR_HOME)
+        if !partial_display()
+            o << Escape::CURSOR_HOME
+        end
 
-        if self.screen_buf:
-            osb = self.screen_buf
-        else:
+        if @screen_buf
+            osb = @screen_buf
+        else
             osb = []
+        end
         sb = []
-        cy = self._cy
+        cy = @_cy
         y = -1
 
-        def set_cursor_home():
-            if not partial_display():
-                return escape.set_cursor_position(0, 0)
-            return (escape.CURSOR_HOME_COL + 
-                escape.move_cursor_up(cy))
+        def set_cursor_home
+            if !partial_display()
+                return Escape::set_cursor_position(0, 0)
+            end
+            return (Escape::CURSOR_HOME_COL + Escape::move_cursor_up(cy))
+        end
         
-        def set_cursor_row(y):
-            if not partial_display():
-                return escape.set_cursor_position(0, y)
-            return escape.move_cursor_down(y - cy)
+        def set_cursor_row(y)
+            if !partial_display()
+                return Escape::set_cursor_position(0, y)
+            end
+            return Escape::move_cursor_down(y - cy)
+        end
 
-        def set_cursor_position(x, y):
-            if not partial_display():
-                return escape.set_cursor_position(x, y)
-            if cy > y:
-                return ('\b' + escape.CURSOR_HOME_COL +
-                    escape.move_cursor_up(cy - y) +
-                    escape.move_cursor_right(x))
-            return ('\b' + escape.CURSOR_HOME_COL +
+        def set_cursor_position(x, y)
+            if !partial_display()
+                return Escape::set_cursor_position(x, y)
+            end
+            if cy > y
+                return ("\b" + Escape::CURSOR_HOME_COL +
+                    Escape::move_cursor_up(cy - y) +
+                    Escape::move_cursor_right(x))
+            end
+            return ("\b" + escape.CURSOR_HOME_COL +
                 escape.move_cursor_down(y - cy) +
                 escape.move_cursor_right(x))
+        end
         
-        def is_blank_row(row):
-            if len(row) > 1:
-                return False
-            if row[0][2].strip():
-                return False
-            return True
+        def is_blank_row(row)
+            if row.length > 1
+                return false
+            end
+            if row[0][2].strip()
+                return false
+            end
+            return true
+        end
 
-        def attr_to_escape(a):
-            if a in self._pal_escape:
-                return self._pal_escape[a]
-            elif isinstance(a, AttrSpec):
-                return self._attrspec_to_escape(a)
+        def attr_to_escape(a)
+            if @_pal_escape.include? a
+                return @_pal_escape[a]
+            elsif a.class == DisplayCommon::AttrSpec
+                return _attrspec_to_escape(a)
+            end
             # undefined attributes use default/default
             # TODO: track and report these
-            return self._attrspec_to_escape(
-                AttrSpec('default','default'))
+            return _attrspec_to_escape(AttrSpec('default','default'))
+        end
 
-        ins = None
-        o.append(set_cursor_home())
+        ins = nil
+        o << set_cursor_home()
         cy = 0
-        for row in r.content():
+        r.content().each {|row|
             y += 1
-            if False and osb and osb[y] == row:
-                # this row of the screen buffer matches what is
-                # currently displayed, so we can skip this line
-                sb.append( osb[y] )
-                continue
+            # if osb && osb[y] == row
+            #     # this row of the screen buffer matches what is
+            #     # currently displayed, so we can skip this line
+            #     sb << osb[y]
+            #     next
+            # end
 
-            sb.append(row)
+            sb << row
             
             # leave blank lines off display when we are using
             # the default screen buffer (allows partial screen)
-            if partial_display() and y > self._rows_used:
-                if is_blank_row(row):
-                    continue
-                self._rows_used = y
+            if partial_display() && y > @_rows_used
+                if is_blank_row(row)
+                    next
+                end
+                @_rows_used = y
+            end
             
-            if y or partial_display():
-                o.append(set_cursor_position(0, y))
+            if y || partial_display()
+                o << set_cursor_position(0, y)
+            end
             # after updating the line we will be just over the
             # edge, but terminals still treat this as being
             # on the same line
             cy = y 
             
-            if y == maxrow-1:
-                row, back, ins = self._last_row(row)
+            if y == maxrow-1
+                row, back, ins = _last_row(row)
+            end
 
-            first = True
-            lasta = lastcs = None
-            for (a,cs, run) in row:
+            first = true
+            lasta = lastcs = nil
+            row.each{|_|
+                a, cs, run = *_
+
                 run = run.translate( _trans_table )
-                if first or lasta != a:
-                    o.append(attr_to_escape(a))
+                if first || lasta != a
+                    o << attr_to_escape(a)
                     lasta = a
-                if first or lastcs != cs:
-                    assert cs in [None, "0"], `cs`
-                    if cs is None:
-                        o.append( escape.SI )
-                    else:
-                        o.append( escape.SO )
+                end
+                if first || lastcs != cs
+                    raise cs.to_s unless [nil, "0"].include? cs
+                    if cs.nil?
+                        o << Escape::SI
+                    else
+                        o << Escape::SO
+                    end
                     lastcs = cs
-                o.append( run )
-                first = False
-            if ins:
-                (inserta, insertcs, inserttext) = ins
+                end
+                o << run
+                first = false
+            }
+            if ins
+                inserta, insertcs, inserttext = *ins
                 ias = attr_to_escape(inserta)
-                assert insertcs in [None, "0"], `insertcs`
-                if cs is None:
-                    icss = escape.SI
-                else:
-                    icss = escape.SO
-                o += [    "\x08"*back, 
+                raise unless [[nil, "0"], insertcs.to_s].include? insertcs
+                if cs.nil?
+                    icss = Escape::SI
+                else
+                    icss = Escape::SO
+                end
+                o += ["\x08"*back, 
                     ias, icss,
-                    escape.INSERT_ON, inserttext,
-                    escape.INSERT_OFF ]
-
-        if r.cursor is not None:
+                    Escape::INSERT_ON, inserttext,
+                    Escape::INSERT_OFF ]
+            end
+        }
+        if !r.cursor.nil?
             x,y = r.cursor
             o += [set_cursor_position(x, y), 
-                escape.SHOW_CURSOR  ]
-            self._cy = y
+                Escape::SHOW_CURSOR  ]
+            @_cy = y
+        end
         
-        if self._resized: 
+        if @_resized
             # handle resize before trying to draw screen
             return
-        try:
+        end
+        begin
             k = 0
-            for l in o:
-                self._term_output_file.write( l )
-                k += len(l)
-                if k > 1024:
-                    self._term_output_file.flush()
+            o.each{ |l|
+                @_term_output_file.write( l )
+                k += l.length
+                if k > 1024
+                    @_term_output_file.flush
                     k = 0
-            self._term_output_file.flush()
-        except IOError, e:
+                end
+            }
+            @_term_output_file.flush
+        rescue IOError, e
             # ignore interrupted syscall
-            if e.args[0] != 4:
+            if e.args[0] != 4
                 raise
+            end
+        end
 
-        self.screen_buf = sb
-        self.keep_cache_alive_link = r
+        @screen_buf = sb
+        @keep_cache_alive_link = r
+    end
                 
     
-    def _last_row(self, row):
-        """On the last row we need to slide the bottom right character
-        into place. Calculate the new line, attr and an insert sequence
-        to do that.
+    def _last_row(row)
+        # On the last row we need to slide the bottom right character
+        # into place. Calculate the new line, attr and an insert sequence
+        # to do that.
+        # 
+        # eg. last row:
+        # XXXXXXXXXXXXXXXXXXXXYZ
+        # 
+        # Y will be drawn after Z, shifting Z into position.
         
-        eg. last row:
-        XXXXXXXXXXXXXXXXXXXXYZ
-        
-        Y will be drawn after Z, shifting Z into position.
-        """
-        
-        new_row = row[:-1]
-        z_attr, z_cs, last_text = row[-1]
-        last_cols = util.calc_width(last_text, 0, len(last_text))
-        last_offs, z_col = util.calc_text_pos(last_text, 0, 
-            len(last_text), last_cols-1)
-        if last_offs == 0:
+        new_row = row[0..-2]
+        z_attr, z_cs, last_text = *row[-1]
+        last_cols = StrUtil::calc_width(last_text, 0, last_text.length)
+        last_offs, z_col = StrUtil::calc_text_pos(last_text, 0, 
+            last_text.length, last_cols-1)
+        if last_offs == 0
             z_text = last_text
-            del new_row[-1]
+            new_row.delete_at(-1)
             # we need another segment
-            y_attr, y_cs, nlast_text = row[-2]
-            nlast_cols = util.calc_width(nlast_text, 0, 
-                len(nlast_text))
+            y_attr, y_cs, nlast_text = *row[-2]
+            nlast_cols = StrUtil::calc_width(nlast_text, 0, nlast_text.length)
             z_col += nlast_cols
-            nlast_offs, y_col = util.calc_text_pos(nlast_text, 0,
-                len(nlast_text), nlast_cols-1)
-            y_text = nlast_text[nlast_offs:]
-            if nlast_offs:
-                new_row.append((y_attr, y_cs, 
-                    nlast_text[:nlast_offs]))
-        else:
-            z_text = last_text[last_offs:]
+            nlast_offs, y_col = StrUtil.calc_text_pos(nlast_text, 0,
+                nlast_text.length, nlast_cols-1)
+            y_text = nlast_text[nlast_offs..-1]
+            if nlast_offs
+                new_row += [y_attr, y_cs, nlast_text[0..nlast_offs-1]]
+            end
+        else
+            z_text = last_text[last_offs..-1]
             y_attr, y_cs = z_attr, z_cs
-            nlast_cols = util.calc_width(last_text, 0,
-                last_offs)
-            nlast_offs, y_col = util.calc_text_pos(last_text, 0,
+            nlast_cols = StrUtil::calc_width(last_text, 0, last_offs)
+            nlast_offs, y_col = StrUtil::calc_text_pos(last_text, 0,
                 last_offs, nlast_cols-1)
-            y_text = last_text[nlast_offs:last_offs]
-            if nlast_offs:
-                new_row.append((y_attr, y_cs,
-                    last_text[:nlast_offs]))
+            y_text = last_text[nlast_offs..last_offs-1]
+            if nlast_offs
+                new_row += [y_attr, y_cs, last_text[0..nlast_offs-1]]
+            end
+        end
         
-        new_row.append((z_attr, z_cs, z_text))
-        return new_row, z_col-y_col, (y_attr, y_cs, y_text)
-
-            
+        new_row += [z_attr, z_cs, z_text]
+        return new_row, z_col-y_col, [y_attr, y_cs, y_text]
+    end
     
-    def clear(self):
-        """
-        Force the screen to be completely repainted on the next
-        call to draw_screen().
-        """
-        self.screen_buf = None
-        self.setup_G1 = True
-
+    def clear()
+        # Force the screen to be completely repainted on the next
+        # call to draw_screen().
+        @screen_buf = nil
+        @setup_G1 = true
+    end
         
-    def _attrspec_to_escape(self, a):
-        """
-        Convert AttrSpec instance a to an escape sequence for the terminal
+    def _attrspec_to_escape(a)
+        # Convert AttrSpec instance a to an escape sequence for the terminal
 
-        >>> s = Screen()
-        >>> a2e = s._attrspec_to_escape
-        >>> a2e(s.AttrSpec('brown', 'dark green'))
-        '\\x1b[0;33;42m'
-        >>> a2e(s.AttrSpec('#fea,underline', '#d0d'))
-        '\\x1b[0;48;5;229;4;38;5;164m'
-        """
-        if a.foreground_high:
+        # >>> s = Screen()
+        # >>> a2e = s._attrspec_to_escape
+        # >>> a2e(s.AttrSpec('brown', 'dark green'))
+        # '\\x1b[0;33;42m'
+        # >>> a2e(s.AttrSpec('#fea,underline', '#d0d'))
+        # '\\x1b[0;48;5;229;4;38;5;164m'
+
+        if a.foreground_high
             fg = "38;5;%d" % a.foreground_number
-        elif a.foreground_basic:
-            if a.foreground_number > 7:
-                if self.bright_is_bold:
-                    fg = "1;%d" % (a.foreground_number - 8 + 30)
-                else:
-                    fg = "%d" % (a.foreground_number - 8 + 90)
-            else:
-                fg = "%d" % (a.foreground_number + 30)
-        else:
+        elsif a.foreground_basic
+            if a.foreground_number > 7
+                if @bright_is_bold
+                    fg = "1;%d" % [a.foreground_number - 8 + 30]
+                else
+                    fg = "%d" % [a.foreground_number - 8 + 90]
+                end
+            else
+                fg = "%d" % [a.foreground_number + 30]
+            end
+        else
             fg = "39"
+        end
         st = "1;" * a.bold + "4;" * a.underline + "7;" * a.standout
-        if a.background_high:
+        if a.background_high
             bg = "48;5;%d" % a.background_number
-        elif a.background_basic:
-            if a.background_number > 7:
+        elsif a.background_basic
+            if a.background_number > 7
                 # this doesn't work on most terminals
-                bg = "%d" % (a.background_number - 8 + 100)
-            else:
-                bg = "%d" % (a.background_number + 40)
-        else:
+                bg = "%d" % [a.background_number - 8 + 100]
+            else
+                bg = "%d" % [a.background_number + 40]
+            end
+        else
             bg = "49"
-        return escape.ESC + "[0;%s;%s%sm" % (fg, st, bg)
+        end
+        return Escape::ESC + "[0;%s;%s%sm" % [fg, st, bg]
+    end
 
+    def set_terminal_properties(colors=nil, bright_is_bold=nil,
+        has_underline=nil)
+        # colors -- number of colors terminal supports (1, 16, 88 or 256)
+        #     or nil to leave unchanged
+        # bright_is_bold -- set to true if this terminal uses the bold 
+        #     setting to create bright colors (numbers 8-15), set to false
+        #     if this Terminal can create bright colors without bold or
+        #     nil to leave unchanged
+        # has_underline -- set to true if this terminal can use the
+        #     underline setting, false if it cannot or nil to leave
+        #     unchanged
+        if colors.nil?
+            colors = @colors
+        end
+        if bright_is_bold.nil?
+            bright_is_bold = @bright_is_bold
+        end
+        if has_underline.nil?
+            has_unerline = @has_underline
+        end
 
-    def set_terminal_properties(self, colors=None, bright_is_bold=None,
-        has_underline=None):
-        """
-        colors -- number of colors terminal supports (1, 16, 88 or 256)
-            or None to leave unchanged
-        bright_is_bold -- set to True if this terminal uses the bold 
-            setting to create bright colors (numbers 8-15), set to False
-            if this Terminal can create bright colors without bold or
-            None to leave unchanged
-        has_underline -- set to True if this terminal can use the
-            underline setting, False if it cannot or None to leave
-            unchanged
-        """
-        if colors is None:
-            colors = self.colors
-        if bright_is_bold is None:
-            bright_is_bold = self.bright_is_bold
-        if has_underline is None:
-            has_unerline = self.has_underline
-
-        if colors == self.colors and bright_is_bold == self.bright_is_bold \
-            and has_underline == self.has_underline:
+        if colors == @colors && bright_is_bold == @bright_is_bold \
+            && has_underline == @has_underline
             return
+        end
 
-        self.colors = colors
-        self.bright_is_bold = bright_is_bold
-        self.has_underline = has_underline
+        @colors = colors
+        @bright_is_bold = bright_is_bold
+        @has_underline = has_underline
             
-        self.clear()
-        self._pal_escape = {}
-        for p,v in self._palette.items():
-            self._on_update_palette_entry(p, *v)
+        clear()
+        @_pal_escape = {}
+        @_palette.items.each_with_index { |p,v|
+            _on_update_palette_entry(p, *v)
+        }
+    end
 
-
-
-    def reset_default_terminal_palette(self):
-        """
-        Attempt to set the terminal palette to default values as taken
-        from xterm.  Uses number of colors from current 
-        set_terminal_properties() screen setting.
-        """
-        if self.colors == 1:
+    def reset_default_terminal_palette
+        # Attempt to set the terminal palette to default values as taken
+        # from xterm.  Uses number of colors from current 
+        # set_terminal_properties() screen setting.
+        if @colors == 1
             return
+        end
 
-        def rgb_values(n):
-            if self.colors == 16:
-                aspec = AttrSpec("h%d"%n, "", 256)
-            else:
-                aspec = AttrSpec("h%d"%n, "", self.colors)
-            return aspec.get_rgb_values()[:3]
+        def rgb_values(n)
+            if @colors == 16
+                aspec = AttrSpec("h%d" % n, "", 256)
+            else
+                aspec = AttrSpec("h%d" % n, "", @colors)
+            end
+            return aspec.get_rgb_values()[0..2]
+        end
 
-        entries = [(n,) + rgb_values(n) for n in range(self.colors)]
-        self.modify_terminal_palette(entries)
+        entries = [range(@colors).map {|n| [n] + rgb_values(n)}]
+        modify_terminal_palette(entries)
+    end
 
 
-    def modify_terminal_palette(self, entries):
-        """
-        entries - list of (index, red, green, blue) tuples.
+    def modify_terminal_palette(entries)
+        # entries - list of (index, red, green, blue) tuples.
 
-        Attempt to set part of the terminal pallette (this does not work
-        on all terminals.)  The changes are sent as a single escape
-        sequence so they should all take effect at the same time.
-        
-        0 <= index < 256 (some terminals will only have 16 or 88 colors)
-        0 <= red, green, blue < 256
-        """
+        # Attempt to set part of the terminal pallette (this does not work
+        # on all terminals.)  The changes are sent as a single escape
+        # sequence so they should all take effect at the same time.
+        # 
+        # 0 <= index < 256 (some terminals will only have 16 or 88 colors)
+        # 0 <= red, green, blue < 256
 
-        modify = ["%d;rgb:%02x/%02x/%02x" % (index, red, green, blue)
-            for index, red, green, blue in entries]
-        seq = self._term_output_file.write("\x1b]4;"+";".join(modify)+"\x1b\\")
-        self._term_output_file.flush()
+        modify = [entries.each{|_|
+          index, red, green, blue = *_
+          "%d;rgb:%02x/%02x/%02x" % [index, red, green, blue]
+        }]
 
+        seq = @_term_output_file.write("\x1b]4;"+modify.join(';')+"\x1b\\")
+        @_term_output_file.flush
+    end
 
     # shortcut for creating an AttrSpec with this screen object's
     # number of colors
-    AttrSpec = lambda self, fg, bg: AttrSpec(fg, bg, self.colors)
-    
+    def AttrSpec(fg, bg) 
+      DisplayCommon::AttrSpec.new(fg, bg, @colors)
+    end
+end
 
-def _test():
-	import doctest
-	doctest.testmod()
-
-if __name__=='__main__':
-	_test()
+end

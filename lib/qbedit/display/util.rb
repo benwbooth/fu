@@ -3,37 +3,32 @@ require 'str_util'
 $VERBOSE=true
 
 module Util
-  # bring str_util functions into our namespace
-  calc_text_pos = str_util.calc_text_pos
-  calc_width = str_util.calc_width
-  is_wide_char = str_util.is_wide_char
-  move_next_char = str_util.move_next_char
-  move_prev_char = str_util.move_prev_char
-  within_double_byte = str_util.within_double_byte
+  # bring StrUtil functions into our namespace
+  include StrUtil
 
   # Try to determine if using a supported double-byte encoding
-  detected_encoding = Encoding.default_external.name or ''
+  detected_encoding = Encoding.default_external.name || ''
 
   _target_encoding = nil
   _use_dec_special = true
 
-  def set_encoding( encoding )
+  def self.set_encoding( encoding )
       # Set the byte encoding to assume when processing strings and the
       # encoding to use when converting unicode strings.
       encoding = encoding.downcase
 
       if [ 'utf-8', 'utf8', 'utf' ].include? encoding
-          str_util.set_byte_encoding("utf8")
+          StrUtil.set_byte_encoding("utf8")
           _use_dec_special = false
       elsif [ 'euc-jp', # JISX 0208 only
               'euc-kr', 'euc-cn', 'euc-tw', # CNS 11643 plain 1 only
               'gb2312', 'gbk', 'big5', 'cn-gb', 'uhc',
               # these shouldn't happen, should they?
               'eucjp', 'euckr', 'euccn', 'euctw', 'cncb' ].include? encoding
-          str_util.set_byte_encoding("wide")
+          StrUtil.set_byte_encoding("wide")
           _use_dec_special = true
       else
-          str_util.set_byte_encoding("narrow")
+          StrUtil.set_byte_encoding("narrow")
           _use_dec_special = true
       end
 
@@ -48,16 +43,15 @@ module Util
       end
   end
 
-
-  def get_encoding_mode()
+  def self.get_encoding_mode()
       # Get the mode Urwid is using when processing text strings.
       # Returns 'narrow' for 8-bit encodings, 'wide' for CJK encodings
       # or 'utf8' for UTF-8 encodings.
-      return str_util.get_byte_encoding()
+      return StrUtil.get_byte_encoding()
   end
 
 
-  def apply_target_encoding( s )
+  def self.apply_target_encoding( s )
       # Return (encoded byte string, character set rle).
     
       if _use_dec_special and s.class == "".class
@@ -116,13 +110,13 @@ module Util
   set_encoding( detected_encoding )
   ######################################################################
 
-  def supports_unicode()
+  def self.supports_unicode()
       # Return true if python is able to convert non-ascii unicode strings
       # to the current encoding.
       return _target_encoding && _target_encoding != 'ASCII-8BIT'
   end
 
-  def calc_trim_text( text, start_offs, end_offs, start_col, end_col )
+  def self.calc_trim_text( text, start_offs, end_offs, start_col, end_col )
       # Calculate the result of trimming text.
       # start_offs -- offset into text to treat as screen column 0
       # end_offs -- offset into text to treat as the end of the line
@@ -154,7 +148,7 @@ module Util
       return spos, pos, pad_left, pad_right
   end
 
-  def trim_text_attr_cs( text, attr, cs, start_col, end_col )
+  def self.trim_text_attr_cs( text, attr, cs, start_col, end_col )
       # Return ( trimmed text, trimmed attr, trimmed cs ).
 
       spos, epos, pad_left, pad_right = calc_trim_text( 
@@ -174,7 +168,7 @@ module Util
       return " "*pad_left + text[spos..epos-1] + " "*pad_right, attrtr, cstr
   end
           
-  def rle_get_at( rle, pos )
+  def self.rle_get_at( rle, pos )
       # Return the attribute at offset pos.
       x = 0
       if pos < 0
@@ -191,7 +185,7 @@ module Util
       return nil
   end
 
-  def rle_subseg( rle, start, _end )
+  def self.rle_subseg( rle, start, _end )
       # Return a sub segment of an rle list.
       l = []
       x = 0
@@ -220,7 +214,7 @@ module Util
       return l
   end
 
-  def rle_len( rle )
+  def self.rle_len( rle )
       # Return the number of characters covered by a run length
       # encoded attribute list.
       
@@ -233,7 +227,7 @@ module Util
       return run
   end
 
-  def rle_append_beginning_modify( rle, i )
+  def self.rle_append_beginning_modify( rle, i )
       a, r = *i
       # Append (a, r) to BEGINNING of rle.
       # Merge with first run when possible
@@ -251,7 +245,7 @@ module Util
       end
   end
               
-  def rle_append_modify( rle, i )
+  def self.rle_append_modify( rle, i )
       a, r = *i
       # Append (a,r) to the rle list rle.
       # Merge with last run when possible.
@@ -265,7 +259,7 @@ module Util
       rle[-1] = [a, lr+r]
   end
 
-  def rle_join_modify( rle, rle2 )
+  def self.rle_join_modify( rle, rle2 )
       # Append attribute list rle2 to rle.
       # Merge last run of rle with first run of rle2 when possible.
 
@@ -277,7 +271,7 @@ module Util
       rle += rle2[1..-1]
   end
           
-  def rle_product( rle1, rle2 )
+  def self.rle_product( rle1, rle2 )
       # Merge the runs of rle1 and rle2 like this:
       # eg.
       # rle1 = [ ("a", 10), ("b", 5) ]
@@ -311,7 +305,7 @@ module Util
       return l    
   end
 
-  def rle_factor( rle )
+  def self.rle_factor( rle )
       # Inverse of rle_product.
       rle1 = []
       rle2 = []
@@ -327,7 +321,7 @@ module Util
   class TagMarkupException < RuntimeError
   end
 
-  def decompose_tagmarkup( tm )
+  def self.decompose_tagmarkup( tm )
       # Return (text string, attribute list) for tagmarkup passed.
       
       tl, al = _tagmarkup_recurse( tm, nil )
@@ -340,7 +334,7 @@ module Util
       return text, al
   end
       
-  def _tagmarkup_recurse( tm, _attr )
+  def self._tagmarkup_recurse( tm, _attr )
       # Return (text list, attribute list) for tagmarkup passed.
       # 
       # tm -- tagmarkup
@@ -390,15 +384,15 @@ module Util
       return [tm], [[_attr, tm.length]]
   end
 
-  def is_mouse_event( ev )
+  def self.is_mouse_event( ev )
       return ev.class == [].class && ev.length==4 && ev[0].include?("mouse")
   end
 
-  def is_mouse_press( ev )
+  def self.is_mouse_press( ev )
       return ev.include? "press"
   end
 
-  def int_scale(val, val_range, out_range)
+  def self.int_scale(val, val_range, out_range)
       # Scale val in the range [0, val_range-1] to an integer in the range 
       # [0, out_range-1].  This implementaton uses the "round-half-up" rounding 
       # method.

@@ -50,7 +50,7 @@ module StrUtil
 
   # ACCESSOR FUNCTIONS
 
-  def get_width( o )
+  def self.get_width( o )
     # Return the screen column width for unicode ordinal o.
     if o == 0xe or o == 0xf
       return 0
@@ -64,7 +64,7 @@ module StrUtil
     return 1
   end
 
-  def decode_one( text, pos )
+  def self.decode_one( text, pos )
     # Return (ordinal at pos, next position) for UTF-8 encoded text.
     b1 = text[pos].ord
     if not b1 & 0x80
@@ -130,7 +130,7 @@ module StrUtil
     return error
   end
 
-  def decode_one_right( text, pos)
+  def self.decode_one_right( text, pos)
     # Return (ordinal at pos, next position) for UTF-8 encoded text.
     # pos is assumed to be on the trailing byte of a utf-8 sequence.
     error = "?".ord, pos-1
@@ -147,16 +147,16 @@ module StrUtil
     end
   end
 
-  def set_byte_encoding(enc)
+  def self.set_byte_encoding(enc)
     raise unless ['utf8', 'narrow', 'wide'].include? enc
     _byte_encoding = enc
   end
 
-  def get_byte_encoding()
+  def self.get_byte_encoding()
     return _byte_encoding
   end
 
-  def calc_text_pos( text, start_offs, end_offs, pref_col )
+  def self.calc_text_pos( text, start_offs, end_offs, pref_col )
     # Calculate the closest position to the screen column pref_col in text
     # where start_offs is the offset into text assumed to be screen column 0
     # and end_offs is the end of the range to search.
@@ -199,7 +199,7 @@ module StrUtil
     return i, i-start_offs
   end
 
-  def calc_width( text, start_offs, end_offs )
+  def self.calc_width( text, start_offs, end_offs )
     # Return the screen column width of text between start_offs and end_offs.
     
     raise "#{start_offs.to_s}, #{end_offs.to_s}" unless start_offs <= end_offs
@@ -225,7 +225,7 @@ module StrUtil
     return end_offs - start_offs
   end
     
-  def is_wide_char( text, offs )
+  def self.s_wide_char( text, offs )
     # Test if the character at offs within text is wide.
     if text.class == "".class
       o = text[offs].ord
@@ -242,7 +242,7 @@ module StrUtil
     return false
   end
 
-  def move_prev_char( text, start_offs, end_offs )
+  def self.move_prev_char( text, start_offs, end_offs )
     # Return the position of the character before end_offs.
     
     raise unless start_offs < end_offs
@@ -264,7 +264,7 @@ module StrUtil
     return end_offs-1
   end
 
-  def move_next_char( text, start_offs, end_offs )
+  def self.move_next_char( text, start_offs, end_offs )
     # Return the position of the character after start_offs.
     
     raise unless start_offs < end_offs
@@ -286,7 +286,7 @@ module StrUtil
     return start_offs+1
   end
 
-  def within_double_byte(str, line_start, pos)
+  def self.within_double_byte(str, line_start, pos)
     # Return whether pos is within a double-byte encoded character.
     # 
     # str -- string in question
@@ -333,7 +333,7 @@ module StrUtil
 
 # TABLE GENERATION CODE
 
-  def process_east_asian_width()
+  def self.process_east_asian_width()
     out = []
     last = nil
     readlines.each{ |line|
