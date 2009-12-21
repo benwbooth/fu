@@ -52,7 +52,7 @@ module StrUtil
 
   def self.get_width( o )
     # Return the screen column width for unicode ordinal o.
-    if o == 0xe or o == 0xf
+    if o == 0xe || o == 0xf
       return 0
     end
     Widths.each {|a|
@@ -67,7 +67,7 @@ module StrUtil
   def self.decode_one( text, pos )
     # Return (ordinal at pos, next position) for UTF-8 encoded text.
     b1 = text[pos].ord
-    if not b1 & 0x80
+    if !(b1 & 0x80)
       return b1, pos+1
     end
     error = "?".ord, pos+1
@@ -164,8 +164,8 @@ module StrUtil
     # Returns (position, actual_col).
 
     raise "#{start_offs}, #{end_offs}" unless start_offs <= end_offs
-    utfs = text.class == "".class and _byte_encoding == "utf8"
-    if text.class == "".class or utfs
+    utfs = text.class == "".class && _byte_encoding == "utf8"
+    if text.class == "".class || utfs
       i = start_offs
       sc = 0
       n = 1 # number to advance by
@@ -203,8 +203,8 @@ module StrUtil
     # Return the screen column width of text between start_offs and end_offs.
     
     raise "#{start_offs.to_s}, #{end_offs.to_s}" unless start_offs <= end_offs
-    utfs = text.class == "".class and _byte_encoding == "utf8"
-    if (text.class == "".class or utfs) and not SAFE_ASCII_RE.match(text)
+    utfs = text.class == "".class && _byte_encoding == "utf8"
+    if (text.class == "".class || utfs) && !SAFE_ASCII_RE.match(text)
       i = start_offs
       sc = 0
       n = 1 # number to advance by
@@ -257,7 +257,7 @@ module StrUtil
       end
       return o
     end
-    if _byte_encoding == "wide" and within_double_byte( text,
+    if _byte_encoding == "wide" && within_double_byte( text,
       start_offs, end_offs-1) == 2
       return end_offs-2
     end
@@ -274,12 +274,12 @@ module StrUtil
     raise unless text.class == "".class
     if _byte_encoding == "utf8"
       o = start_offs+1
-      while o<end_offs and text[o].ord&0xc0 == 0x80
+      while o<end_offs && text[o].ord&0xc0 == 0x80
         o += 1
       end
       return o
     end
-    if _byte_encoding == "wide" and within_double_byte(text, 
+    if _byte_encoding == "wide" && within_double_byte(text, 
       start_offs, start_offs) == 1
       return start_offs +2
     end
@@ -299,7 +299,7 @@ module StrUtil
     # 2 -- pos is on the 2nd half og a dbe char
     v = str[pos].ord
 
-    if v >= 0x40 and v < 0x7f
+    if v >= 0x40 && v < 0x7f
       # might be second half of big5, uhc or gbk encoding
       if pos == line_start
         return 0

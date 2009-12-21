@@ -233,7 +233,7 @@ module Util
       # Merge with first run when possible
 
       # MODIFIES rle parameter contents. Returns nil.
-      if not rle
+      if !rle
           rle[0..-1] = [[a, r]]
       else
           al, run = *rle[0]
@@ -251,7 +251,7 @@ module Util
       # Merge with last run when possible.
       # 
       # MODIFIES rle parameter contents. Returns nil.
-      if not rle or rle[-1][0] != a
+      if !rle || rle[-1][0] != a
           rle << [a,r]
           return
       end
@@ -264,7 +264,7 @@ module Util
       # Merge last run of rle with first run of rle2 when possible.
 
       # MODIFIES attr parameter contents. Returns nil.
-      if not rle2
+      if !rle2
           return
       end
       rle_append_modify(rle, rle2[0])
@@ -281,23 +281,23 @@ module Util
       # rle1 and rle2 are assumed to cover the same total run.
 
       i1 = i2 = 1 # rle1, rle2 indexes
-      if not rle1 or not rle2
+      if !rle1 || !rle2
         return []
       end
       a1, r1 = rle1[0]
       a2, r2 = rle2[0]
       
       l = []
-      while r1 and r2
+      while r1 && r2
           r = [r1, r2].min
           rle_append_modify( l, [[a1,a2],r] )
           r1 -= r
-          if r1 == 0 and i1< rle1.length
+          if r1 == 0 && i1< rle1.length
               a1, r1 = rle1[i1]
               i1 += 1
           end
           r2 -= r
-          if r2 == 0 and i2< rle2.length
+          if r2 == 0 && i2< rle2.length
               a2, r2 = rle2[i2]
               i2 += 1
           end
@@ -327,7 +327,7 @@ module Util
       tl, al = _tagmarkup_recurse( tm, nil )
       text = "".join(tl)
       
-      if al and al[-1][0].nil?
+      if al && al[-1][0].nil?
           al.delete_at(-1)
       end
           
@@ -371,7 +371,7 @@ module Util
           return _tagmarkup_recurse( element, _attr )
       end
       
-      if not [str, unicode].include? tm.class
+      if ![str, unicode].include?(tm.class)
           # last ditch, try converting the object to unicode
           begin
               tm = uncode(tm)

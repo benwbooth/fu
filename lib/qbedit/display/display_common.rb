@@ -321,14 +321,14 @@ module DisplayCommon
           if desc[0..1] == 'g#'
               # hex value 00..ff
               gray = desc[2..-1].hex
-              if gray < 0 or gray > 255
+              if gray < 0 || gray > 255
                   return nil
               end
               gray = GRAY_256_LOOKUP[gray]
           elsif desc[0] == 'g'
               # decimal value 0..100
               gray = desc[1..-1].to_i
-              if gray < 0 or gray > 100
+              if gray < 0 || gray > 100
                   return nil
               end
               gray = GRAY_256_LOOKUP_101[gray]
@@ -375,7 +375,7 @@ module DisplayCommon
           if desc[0] == 'h'
               # high-color number
               num = desc[1..-1].to_i
-              if num < 0 or num > 87
+              if num < 0 || num > 87
                   return nil
               end
               return num
@@ -400,14 +400,14 @@ module DisplayCommon
           if desc[0..1] == 'g#'
               # hex value 00..ff
               gray = desc[2..-1].hex
-              if gray < 0 or gray > 255
+              if gray < 0 || gray > 255
                   return nil
               end
               gray = GRAY_88_LOOKUP[gray]
           elsif desc == 'g'
               # decimal value 0..100
               gray = desc[1..-1].to_i
-              if gray < 0 or gray > 100
+              if gray < 0 || gray > 100
                   return nil
               end
               gray = GRAY_88_LOOKUP_101[gray]
@@ -606,7 +606,7 @@ module DisplayCommon
                   raise AttrSpecError, ("Unrecognised color specification %s"+
                       "in foreground (%s)") % [part.to_s, foreground.to_s]
               end
-              if not color.nil?
+              if !color.nil?
                   raise AttrSpecError, "More than one color given for "+
                       "foreground (%s)" % foreground.to_s
               end
@@ -727,19 +727,19 @@ module DisplayCommon
         susp = 0
       end
       
-      if not intr.nil?
+      if !intr.nil?
         sattr[Termios::VINTR] = intr
       end
-      if not quit.nil?
+      if !quit.nil?
         sattr[Termios::VQUIT] = quit
       end
-      if not start.nil?
+      if !start.nil?
         sattr[Termios::VSTART] = start
       end
-      if not stop.nil?
+      if !stop.nil?
         sattr[Termios::VSTOP] = stop
       end
-      if not susp.nil?
+      if !susp.nil?
         sattr[Termios::VSUSP] = susp
       end
       
@@ -786,7 +786,7 @@ module DisplayCommon
                   raise ScreenError, "Invalid register_palette entry: %s"%item
               end
               name, like_name = *item
-              if not @palette.has_key? like_name
+              if !@palette.has_key?(like_name)
                   raise ScreenError, "palette entry '%s' doesn't exist"%like_name
               end
               @palette[name] = @palette[like_name]

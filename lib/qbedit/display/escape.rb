@@ -114,7 +114,7 @@ module Escape
 
     def get(keys, more_available)
       result = get_recurse(@data, keys, more_available)
-      if not result
+      if !result
         result = read_cursor_position(keys, more_available)
       end
       return result
@@ -127,13 +127,13 @@ module Escape
         end
         return root, keys
       end
-      if not keys
+      if !keys
         if more_available
           raise MoreInputRequired
         end
         return nil
       end
-      if not root.has_key? keys[0]
+      if !root.has_key?(keys[0])
         return nil
       end
       return get_recurse(root[keys[0]], keys[1..keys.length-1], more_available)
@@ -175,7 +175,7 @@ module Escape
 		  # Interpret cursor position information being sent by the
 		  # user's terminal.  Returned as ('cursor position', x, y)
 		  # where (x, y) == (0, 0) is the top left of the screen.
-      if not keys
+      if !keys
         if more_available
           raise MoreInputRequired
         end
@@ -190,20 +190,20 @@ module Escape
       keys[i..keys.length-1].each { |k|
         i += 1
         if k == ';'.ord
-          if not y
+          if !y
             return nil
           end
           break
         end
-        if k < '0'.ord or k > '9'.ord
+        if k < '0'.ord || k > '9'.ord
           return nil
         end
-        if not y and k == '0'.ord
+        if !y && k == '0'.ord
           return nil
         end
         y = y*10 + k - '0'.ord
       }
-      if not keys[i..keys.length-1]
+      if !keys[i..keys.length-1]
         if more_available
           raise MoreInputRequired
         end
@@ -214,20 +214,20 @@ module Escape
       keys[i..keys.length-1].each { |k|
         i += 1
         if k == 'R'.ord
-          if not x
+          if !x
             return nil
           end
           return [['cursor position', x-1, y-1], keys[i..keys.length-1]]
         end
-        if k < '0'.ord or k > '9'.ord
+        if k < '0'.ord || k > '9'.ord
           return nil
         end
-        if not x and k == '0'.ord
+        if !x && k == '0'.ord
           return nil
         end
         x = x*10 + k - '0'.ord
       }
-      if not keys[i..keys.length-1]
+      if !keys[i..keys.length-1]
         if more_available
           raise MoreInputRequired
         end
@@ -283,36 +283,36 @@ module Escape
 	  # 
 	  # returns (list of input, list of remaining key codes).
     code = codes[0]
-    if code >= 32 and code <= 126
+    if code >= 32 && code <= 126
       key = code.chr
       return [key], codes[1..codes.length-1]
     end
     if _keyconv.has_key? code
       return [_keyconv[code]], codes[1..codes.length-1]
     end
-    if code > 0 and code < 27
+    if code > 0 && code < 27
       return ['ctrl '+('a'.ord+code-1).chr], codes[1..codes.length-1]
     end
-    if code > 27 and code < 32
+    if code > 27 && code < 32
       return ['ctrl '+('A'.ord+code-1).chr], codes[1..codes.length-1]
     end
 
     em = util.get_encoding_mode
 
-    if (em == 'wide' and code < 256 and util.within_double_byte(code.chr, 0, 0))
-      if not codes[1..codes.length-1]
+    if (em == 'wide' && code < 256 && util.within_double_byte(code.chr, 0, 0))
+      if !codes[1..codes.length-1]
         if more_available
           raise MoreInputRequired
         end
       end
-      if codes[1..codes.length-1] and codes[1] < 256
+      if codes[1..codes.length-1] && codes[1] < 256
         db = code.chr+codes[1].chr
         if util.within_double_byte(db, 0, 1)
           return [db], codes[2..codes.length-1]
         end
       end
     end
-    if em == 'utf8' and code > 127 and code < 256
+    if em == 'utf8' && code > 127 && code < 256
       if code & 0xe0 == 0xc0 # 2-byte form
         need_more = 1
       elsif code & 0xf0 == 0xe0 # 3-byte form
@@ -332,7 +332,7 @@ module Escape
           end
         end
         k = codes[i+1]
-        if k > 256 or k & 0xc0 != 0x80
+        if k > 256 || k & 0xc0 != 0x80
           return ["<#{code}>"], codes[1..codes.length-1]
         end
       }
@@ -345,7 +345,7 @@ module Escape
       end
     end
 
-    if code > 127 and code < 256
+    if code > 127 && code < 256
       key = code.chr
       return [key], codes[1..codes.length-1]
     end
@@ -355,7 +355,7 @@ module Escape
 
     result = input_trie.get(codes[1..codes.length-1], more_available)
 
-    if not result.nil?
+    if !result.nil?
       result, remaining_codes = *result
       return [result], remaining_codes
     end
@@ -364,7 +364,7 @@ module Escape
       # Meta keys -- ESC+Key form
       run, remaining_codeds = *process_keyqueue(codes[1..codes.length-1],
                                                 more_available)
-      if run[0] == 'esc' or run[0].match('meta ')
+      if run[0] == 'esc' || run[0].match('meta ')
         return ['esc']+run,  remaining_codes
       end
       return ['meta '+run[0]]+run[1..run.length-1], remaining_codes

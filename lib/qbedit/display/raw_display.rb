@@ -108,7 +108,7 @@ class Screen < BaseScreen
         #     window resize operation
 
         @max_wait = max_wait
-        if not max_wait.nil?
+        if !max_wait.nil?
             if @_next_timeout.nil?
                 @_next_timeout = max_wait
             else
@@ -120,7 +120,7 @@ class Screen < BaseScreen
     end
 
     def _sigwinch_handler(signum, frame)
-        if not @_resized
+        if !@_resized
             @_resize_pipe_wr.write('R')
         end
         @_resized = true
@@ -164,10 +164,10 @@ class Screen < BaseScreen
         if !File.exists? "/usr/bin/mev"
             return
         end
-        if not (ENV['TERM']||'').downcase().start_with? "linux"
+        if !(ENV['TERM']||'').downcase().start_with? "linux"
             return
         end
-        if not IO.respond_to? 'popen'
+        if !IO.respond_to? 'popen'
             return
         end
         m = IO.popen(["/usr/bin/mev","-e","158"])
@@ -367,7 +367,7 @@ class Screen < BaseScreen
         # Use this method if you are implementing yout own event loop.
 
         fd_list = [@_term_input_file, @_resize_pipe_rd]
-        if not @gpm_mev.nil?
+        if !@gpm_mev.nil?
             fd_list << @gpm_mev.stdout
         end
         return fd_list
@@ -455,7 +455,7 @@ class Screen < BaseScreen
 
     def _get_gpm_codes
         codes = []
-        if not @gpm_mev.nil?
+        if !@gpm_mev.nil?
             begin
                 while true
                     codes += _encode_gpm_event()
@@ -472,7 +472,7 @@ class Screen < BaseScreen
     def _wait_for_input_ready(timeout)
         ready = nil
         fd_list = [@_term_input_file]
-        if not @gpm_mev.nil?
+        if !@gpm_mev.nil?
             fd_list << @gpm_mev.stdout
         end
         while true
@@ -547,15 +547,15 @@ class Screen < BaseScreen
         end
 
         if ev == 20 # press
-            if b & 4 and last & 1 == 0
+            if b & 4 && last & 1 == 0
                 append_button( 0 )
                 _next |= 1
             end
-            if b & 2 and last & 2 == 0
+            if b & 2 && last & 2 == 0
                 append_button( 1 )
                 _next |= 2
             end
-            if b & 1 and last & 4 == 0
+            if b & 1 && last & 4 == 0
                 append_button( 2 )
                 _next |= 4
             end
@@ -990,8 +990,8 @@ class Screen < BaseScreen
 
     # shortcut for creating an AttrSpec with this screen object's
     # number of colors
-    def AttrSpec(fg, bg) 
-      DisplayCommon::AttrSpec.new(fg, bg, @colors)
+    def AttrSpec(fg, bg, colors=@colors) 
+      DisplayCommon::AttrSpec.new(fg, bg, colors)
     end
 end
 

@@ -71,7 +71,7 @@ module CursesDisplay
         end
         raise "Invalid register_palette usage" unless item.length == 2
         name, like_name = *item
-        if not palette.has_key? like_name
+        if !palette.has_key? like_name
           raise Exception, "palette entry '%s' doesn't exist"%like_name
         end
         @palette[name] = @palette[like_name]
@@ -96,7 +96,7 @@ module CursesDisplay
       # 	'bold',	'underline', 'standout', or a tuple containing
       # 	a combination eg. ('bold','underline')
       #
-      raise unless not @started
+      raise if @started
 
       fg_a, fg_b = *CURSES_COLORS[foreground]
       bg_a, bg_b = *CURSES_COLORS[background]
@@ -164,7 +164,7 @@ module CursesDisplay
       Ncurses.halfdelay(10) # use set_input_timeouts to adjust
       Ncurses.keypad(@s, 0)
       
-      if not @_signal_keys_set
+      if !@_signal_keys_set
         @_old_signal_keys = tty_signal_keys()
       end
     end
@@ -214,10 +214,10 @@ module CursesDisplay
       
         @curses_pairs[1..-1].each {|a|
           fg,bg = *a
-          if not @has_default_colors and fg == -1
+          if !@has_default_colors && fg == -1
             fg = CURSES_COLORS["black"][0]
           end
-          if not @has_default_colors and bg == -1
+          if !@has_default_colors && bg == -1
             bg = CURSES_COLORS["light gray"][0]
           end
           Ncurses.init_pair(k,fg,bg)
@@ -374,11 +374,11 @@ module CursesDisplay
       # Avoid pegging CPU at 100% when slowly resizing, and work
       # around a bug with some braindead curses implementations that 
       # return "no key" between "window resize" commands 
-      if keys==['window resize'] and @prev_input_resize
+      if keys==['window resize'] && @prev_input_resize
         while true
           keys, raw2 = _get_input(@resize_tenths)
           raw += raw2
-          if not keys
+          if !keys
             keys, raw2 = _get_input(@resize_tenths)
             raw += raw2
           end
@@ -479,35 +479,35 @@ module CursesDisplay
         l += [ 27, '['.ord, 'M'.ord, b+32, x+33, y+33 ]
       end
       
-      if bstate & Ncurses::BUTTON1_PRESSED and last & 1 == 0
+      if bstate & Ncurses::BUTTON1_PRESSED && last & 1 == 0
         append_button( 0 )
         _next |= 1
       end
-      if bstate & Ncurses::BUTTON2_PRESSED and last & 2 == 0
+      if bstate & Ncurses::BUTTON2_PRESSED && last & 2 == 0
         append_button( 1 )
         _next |= 2
       end
-      if bstate & Ncurses::BUTTON3_PRESSED and last & 4 == 0
+      if bstate & Ncurses::BUTTON3_PRESSED && last & 4 == 0
         append_button( 2 )
         _next |= 4
       end
-      if bstate & Ncurses::BUTTON4_PRESSED and last & 8 == 0
+      if bstate & Ncurses::BUTTON4_PRESSED && last & 8 == 0
         append_button( 64 )
         _next |= 8
       end
-      if bstate & Ncurses::BUTTON1_RELEASED and last & 1
+      if bstate & Ncurses::BUTTON1_RELEASED && last & 1
         append_button( 0 + escape.MOUSE_RELEASE_FLAG )
         _next &= ~ 1
       end
-      if bstate & Ncurses::BUTTON2_RELEASED and last & 2
+      if bstate & Ncurses::BUTTON2_RELEASED && last & 2
         append_button( 1 + escape.MOUSE_RELEASE_FLAG )
         _next &= ~ 2
       end
-      if bstate & Ncurses::BUTTON3_RELEASED and last & 4
+      if bstate & Ncurses::BUTTON3_RELEASED && last & 4
         append_button( 2 + escape.MOUSE_RELEASE_FLAG )
         _next &= ~ 4
       end
-      if bstate & Ncurses::BUTTON4_RELEASED and last & 8
+      if bstate & Ncurses::BUTTON4_RELEASED && last & 8
         append_button( 64 + escape.MOUSE_RELEASE_FLAG )
         _next &= ~ 8
       end
@@ -555,7 +555,7 @@ module CursesDisplay
         @s.attrset( 0 )
         return
       end
-      if not @attrconv.has_key? a
+      if !@attrconv.has_key?(a)
         raise Exception, "Attribute %s not registered!"%a.to_s
       end
       @s.attrset( @attrconv[a] )
@@ -601,7 +601,7 @@ module CursesDisplay
           rescue
             # it's ok to get out of the
             # screen on the lower right
-            if (y == rows-1 and nr == row.length-1)
+            if (y == rows-1 && nr == row.length-1)
             else
               # perhaps screen size changed
               # quietly abort.
@@ -611,7 +611,7 @@ module CursesDisplay
           nr += 1
         }
       }
-      if not r.cursor.nil?
+      if !r.cursor.nil?
         x,y = *r.cursor
         _curs_set(1)
         begin
@@ -682,7 +682,7 @@ module CursesDisplay
         if keys.include? 'window resize'
           cols, rows = @ui.get_cols_rows()
         end
-        if not keys
+        if !keys
           next
         end
         t = ""
