@@ -2,8 +2,7 @@
 
 require 'rubygems'
 require 'ncurses'
-require 'getoptlong'
-require 'rdoc/usage'
+require 'optparse'
 
 require 'qbedit/display/raw_display'
 
@@ -11,12 +10,10 @@ class Qbedit
   def initialize
   end
   def command_line
-    opts = GetoptLong.new(
-      ['--help', '-h', GetoptLong::NO_ARGUMENT],
-    )
   end
   def demo
-    
+  end
+  def event_loop
   end
 end
 
@@ -40,6 +37,4 @@ ensure
   Ncurses.nl
   Ncurses.endwin
 end
-
-exit 0
 

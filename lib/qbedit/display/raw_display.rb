@@ -23,14 +23,12 @@
 require 'termios'
 require 'pty'
 require 'fcntl'
-require 'signal'
-require 'process'
 require 'fiber'
 
-require 'str_util'
-require 'util'
-require 'escape'
-require 'display_common'
+require 'qbedit/display/str_util'
+require 'qbedit/display/util'
+require 'qbedit/display/escape'
+require 'qbedit/display/display_common'
 
 module RawDisplay
 
@@ -44,13 +42,16 @@ OSPEED = 5
 CC = 6
 
 # replace control characters with ?'s
-_trans_table = (32..256).map {|_| _.chr}.join("?"*32+"")
+_trans_table = [
+  (0..255).map {|_| _.chr}.join(''), 
+  ('?'*32)+(32..255).map {|_| _.chr}.join('')
+]
 
 class ScreenError < Exception
 end
 
-class Screen < BaseScreen
-    def initialize
+class Screen < DisplayCommon::BaseScreen
+    def initialize(term_output_file=$stdout, term_input_file=$stdin)
         # Initialize a screen that directly prints escape codes to an output
         # terminal.
         super
@@ -75,8 +76,8 @@ class Screen < BaseScreen
         @_started = false
         @bright_is_bold = !ENV['TERM'].include?('xterm')
         @_next_timeout = nil
-        @_term_output_file = $stdout
-        @_term_input_file = $stdin
+        @_term_output_file = term_output_file
+        @_term_input_file = term_input_file
         # pipe for signalling external event loops about resize events
         @_resize_pipe_rd, @_resize_pipe_wr = IO.pipe
         @_resize_pipe_rd.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK);
@@ -92,20 +93,20 @@ class Screen < BaseScreen
             attrspecs[{16=>0,1=>1,88=>2,256=>3}[@colors]])
     end
 
+    # Set the get_input timeout values.  All values are in floating
+    # point numbers of seconds.
+    # 
+    # max_wait -- amount of time in seconds to wait for input when
+    #     there is no input pending, wait forever if nil
+    # complete_wait -- amount of time in seconds to wait when
+    #     get_input detects an incomplete escape sequence at the
+    #     end of the available input
+    # resize_wait -- amount of time in seconds to wait for more input
+    #     after receiving two screen resize requests in a row to
+    #     stop Urwid from consuming 100% cpu during a gradual
+    #     window resize operation
     def set_input_timeouts(max_wait=nil, complete_wait=0.125, 
         resize_wait=0.125)
-        # Set the get_input timeout values.  All values are in floating
-        # point numbers of seconds.
-        # 
-        # max_wait -- amount of time in seconds to wait for input when
-        #     there is no input pending, wait forever if nil
-        # complete_wait -- amount of time in seconds to wait when
-        #     get_input detects an incomplete escape sequence at the
-        #     end of the available input
-        # resize_wait -- amount of time in seconds to wait for more input
-        #     after receiving two screen resize requests in a row to
-        #     stop Urwid from consuming 100% cpu during a gradual
-        #     window resize operation
 
         @max_wait = max_wait
         if !max_wait.nil?
@@ -127,25 +128,23 @@ class Screen < BaseScreen
         @screen_buf = nil
     end
       
+    # Called in the startup of run wrapper to set the SIGWINCH 
+    # signal handler to @_sigwinch_handler.
+    #
+    # Override this function to call from main thread in threaded
+    # applications.
     def signal_init
-        # Called in the startup of run wrapper to set the SIGWINCH 
-        # signal handler to @_sigwinch_handler.
-
-        # Override this function to call from main thread in threaded
-        # applications.
-
         Signal.trap('WINCH') do 
           _sigwinch_handler
         end
     end
     
+    # Called in the finally block of run wrapper to restore the
+    # SIGWINCH handler to the default handler.
+    #
+    # Override this function to call from main thread in threaded
+    # applications.
     def signal_restore
-        # Called in the finally block of run wrapper to restore the
-        # SIGWINCH handler to the default handler.
-
-        # Override this function to call from main thread in threaded
-        # applications.
-
         Signal.trap('WINCH', 'SIG_DFL')
     end
       
@@ -181,8 +180,8 @@ class Screen < BaseScreen
         @gpm_mev = nil
     end
 
+    # Put terminal into a raw mode.
     def setraw(io, _when=Termios::TCSAFLUSH)
-        # Put terminal into a raw mode.
         mode = Termios.tcgetattr(io)
         mode.iflag |= ~(Termios::BRKINT | Termios::ICRNL | Termios::INPCK | 
                         Termios::ISTRIP | Termios::IXON)
@@ -196,8 +195,8 @@ class Screen < BaseScreen
         Termios.tcsetattr(io, _when, mode)
     end
 
+    # Put terminal into a cbreak mode.
     def setcbreak(io, _when=Termios::TCSAFLUSH)
-        # Put terminal into a cbreak mode.
         mode = tcgetattr(io)
         mode.lflag &= ~(Termios::ECHO | Termios::ICANON)
         mode.cc.vmin = 1
@@ -205,11 +204,10 @@ class Screen < BaseScreen
         Termios.tcsetattr(io, _when, mode)
     end
 
+    # Initialize the screen and input mode.
+    # 
+    # alternate_buffer -- use alternate screen buffer
     def start(alternate_buffer=true)
-        # Initialize the screen and input mode.
-        # 
-        # alternate_buffer -- use alternate screen buffer
-      
         raise if @_started
         if alternate_buffer
             @_term_output_file.write(Escape::SWITCH_TO_ALTERNATE_BUFFER)
@@ -232,9 +230,8 @@ class Screen < BaseScreen
         @_started = true
     end
     
+    # Restore the screen.
     def stop
-        # Restore the screen.
-
         clear()
         if !@_started
             return
@@ -266,13 +263,12 @@ class Screen < BaseScreen
         @_started = false
     end
         
+    # Call start to initialize screen, then call fn.  
+    # When fn exits call stop to restore the screen to normal.
+    #
+    # alternate_buffer -- use alternate screen buffer and restore
+    #     normal screen buffer on exit
     def run_wrapper(fn, alternate_buffer=true)
-        # Call start to initialize screen, then call fn.  
-        # When fn exits call stop to restore the screen to normal.
-
-        # alternate_buffer -- use alternate screen buffer and restore
-        #     normal screen buffer on exit
-
         begin
             start(alternate_buffer)
             return fn()
@@ -281,47 +277,46 @@ class Screen < BaseScreen
         end
     end
             
+    # Return pending input as a list.
+    #
+    # raw_keys -- return raw keycodes as well as translated versions
+    #
+    # This function will immediately return all the input since the
+    # last time it was called.  If there is no input pending it will
+    # wait before returning an empty list.  The wait time may be
+    # configured with the set_input_timeouts function.
+    #
+    # If raw_keys is false (default) this function will return a list
+    # of keys pressed.  If raw_keys is true this function will return
+    # a ( keys pressed, raw keycodes ) tuple instead.
+    # 
+    # Examples of keys returned
+    # -------------------------
+    # ASCII printable characters:  " ", "a", "0", "A", "-", "/" 
+    # ASCII control characters:  "tab", "enter"
+    # Escape sequences:  "up", "page up", "home", "insert", "f1"
+    # Key combinations:  "shift f1", "meta a", "ctrl b"
+    # Window events:  "window resize"
+    # 
+    # When a narrow encoding is not enabled
+    # "Extended ASCII" characters:  "\\xa1", "\\xb2", "\\xfe"
+    #
+    # When a wide encoding is enabled
+    # Double-byte characters:  "\\xa1\\xea", "\\xb2\\xd4"
+    #
+    # When utf8 encoding is enabled
+    # Unicode characters: u"\\u00a5", u'\\u253c"
+    # 
+    # Examples of mouse events returned
+    # ---------------------------------
+    # Mouse button press: ('mouse press', 1, 15, 13), 
+    #                     ('meta mouse press', 2, 17, 23)
+    # Mouse drag: ('mouse drag', 1, 16, 13),
+    #             ('mouse drag', 1, 17, 13),
+    #         ('ctrl mouse drag', 1, 18, 13)
+    # Mouse button release: ('mouse release', 0, 18, 13),
+    #                       ('ctrl mouse release', 0, 17, 23)
     def get_input(raw_keys=false)
-        # Return pending input as a list.
-
-        # raw_keys -- return raw keycodes as well as translated versions
-
-        # This function will immediately return all the input since the
-        # last time it was called.  If there is no input pending it will
-        # wait before returning an empty list.  The wait time may be
-        # configured with the set_input_timeouts function.
-
-        # If raw_keys is false (default) this function will return a list
-        # of keys pressed.  If raw_keys is true this function will return
-        # a ( keys pressed, raw keycodes ) tuple instead.
-        # 
-        # Examples of keys returned
-        # -------------------------
-        # ASCII printable characters:  " ", "a", "0", "A", "-", "/" 
-        # ASCII control characters:  "tab", "enter"
-        # Escape sequences:  "up", "page up", "home", "insert", "f1"
-        # Key combinations:  "shift f1", "meta a", "ctrl b"
-        # Window events:  "window resize"
-        # 
-        # When a narrow encoding is not enabled
-        # "Extended ASCII" characters:  "\\xa1", "\\xb2", "\\xfe"
-
-        # When a wide encoding is enabled
-        # Double-byte characters:  "\\xa1\\xea", "\\xb2\\xd4"
-
-        # When utf8 encoding is enabled
-        # Unicode characters: u"\\u00a5", u'\\u253c"
-        # 
-        # Examples of mouse events returned
-        # ---------------------------------
-        # Mouse button press: ('mouse press', 1, 15, 13), 
-        #                     ('meta mouse press', 2, 17, 23)
-        # Mouse drag: ('mouse drag', 1, 16, 13),
-        #             ('mouse drag', 1, 17, 13),
-        #         ('ctrl mouse drag', 1, 18, 13)
-        # Mouse button release: ('mouse release', 0, 18, 13),
-        #                       ('ctrl mouse release', 0, 17, 23)
-
         raise if !@_started
         
         _wait_for_input_ready(@_next_timeout)
@@ -360,12 +355,11 @@ class Screen < BaseScreen
         return keys
     end
 
+    # Return a list of integer file descriptors that should be
+    # polled in external event loops to check for user input.
+    #
+    # Use this method if you are implementing yout own event loop.
     def get_input_descriptors
-        # Return a list of integer file descriptors that should be
-        # polled in external event loops to check for user input.
-
-        # Use this method if you are implementing yout own event loop.
-
         fd_list = [@_term_input_file, @_resize_pipe_rd]
         if !@gpm_mev.nil?
             fd_list << @gpm_mev.stdout
@@ -373,27 +367,26 @@ class Screen < BaseScreen
         return fd_list
     end
         
+    # Return a (next_input_timeout, keys_pressed, raw_keycodes) 
+    # tuple.
+    #
+    # Use this method if you are implementing your own event loop.
+    # 
+    # When there is input waiting on one of the descriptors returned
+    # by get_input_descriptors() this method should be called to
+    # read and process the input.
+    #
+    # This method expects to be called in next_input_timeout seconds
+    # (a floating point number) if there is no input waiting.
     def get_input_nonblocking
-        # Return a (next_input_timeout, keys_pressed, raw_keycodes) 
-        # tuple.
-
-        # Use this method if you are implementing your own event loop.
-        # 
-        # When there is input waiting on one of the descriptors returned
-        # by get_input_descriptors() this method should be called to
-        # read and process the input.
-
-        # This method expects to be called in next_input_timeout seconds
-        # (a floating point number) if there is no input waiting.
-
         raise if !@_started
         return @_input_iter.next()
     end
 
     @_run_input_iter = Fiber.new do
+        # clean out the pipe used to signal external event loops
+        # that a resize has occured
         def empty_resize_pipe
-            # clean out the pipe used to signal external event loops
-            # that a resize has occured
             while !@_resize_pipe_rd.read(1).nil?
             end
         end
@@ -432,10 +425,9 @@ class Screen < BaseScreen
         end
     end
 
+    # This generator is a placeholder for when the screen is stopped
+    # to always return that no input is available.
     @_fake_input_iter = Fiber.new do
-        # This generator is a placeholder for when the screen is stopped
-        # to always return that no input is available.
-
         while true
             Fiber.yield(@max_wait, [], [])
         end
@@ -531,13 +523,13 @@ class Screen < BaseScreen
         l = []
         
         mod = 0
-        if m & 1
+        if m & 1 != 0
           mod |= 4 # shift
         end
-        if m & 10
+        if m & 10 != 0
           mod |= 8 # alt
         end
-        if m & 4
+        if m & 4 != 0
           mod |= 16 # ctrl
         end
 
@@ -547,36 +539,36 @@ class Screen < BaseScreen
         end
 
         if ev == 20 # press
-            if b & 4 && last & 1 == 0
+            if b & 4 != 0 && last & 1 == 0
                 append_button( 0 )
                 _next |= 1
             end
-            if b & 2 && last & 2 == 0
+            if b & 2 != 0 && last & 2 == 0
                 append_button( 1 )
                 _next |= 2
             end
-            if b & 1 && last & 4 == 0
+            if b & 1 != 0 && last & 4 == 0
                 append_button( 2 )
                 _next |= 4
             end
         elsif ev == 146 # drag
-            if b & 4
+            if b & 4 != 0
                 append_button( 0 + Escape::MOUSE_DRAG_FLAG )
-            elsif b & 2
+            elsif b & 2 != 0
                 append_button( 1 + Escape::MOUSE_DRAG_FLAG )
-            elsif b & 1
+            elsif b & 1 != 0
                 append_button( 2 + Escape::MOUSE_DRAG_FLAG )
             end
         else # release
-            if b & 4 && last & 1
+            if b & 4 != 0 && last & 1 != 0
                 append_button( 0 + Escape::MOUSE_RELEASE_FLAG )
                 _next &= ~ 1
             end
-            if b & 2 && last & 2
+            if b & 2 != 0 && last & 2 != 0
                 append_button( 1 + Escape::MOUSE_RELEASE_FLAG )
                 _next &= ~ 2
             end
-            if b & 1 && last & 4
+            if b & 1 != 0 && last & 4 != 0
                 append_button( 2 + Escape::MOUSE_RELEASE_FLAG )
                 _next &= ~ 4
             end
@@ -590,8 +582,8 @@ class Screen < BaseScreen
         return _getch(0)
     end
 
+    # Return the terminal dimensions (num columns, num rows).
     def get_cols_rows
-      # Return the terminal dimensions (num columns, num rows).
       begin
         tty = File.open('/dev/tty', File::RDWR|File::NOCTTY)
         tty.sync = true
@@ -611,9 +603,8 @@ class Screen < BaseScreen
       return *size
     end
     
+    # Initialize the G1 character set to graphics mode if required.
     def _setup_G1
-        # Initialize the G1 character set to graphics mode if required.
-
         if @_setup_G1_done
             return
         end
@@ -752,7 +743,7 @@ class Screen < BaseScreen
             row.each{|_|
                 a, cs, run = *_
 
-                run = run.translate( _trans_table )
+                run.tr!(*_trans_table)
                 if first || lasta != a
                     o << attr_to_escape(a)
                     lasta = a
@@ -818,16 +809,15 @@ class Screen < BaseScreen
     end
                 
     
+    # On the last row we need to slide the bottom right character
+    # into place. Calculate the new line, attr and an insert sequence
+    # to do that.
+    # 
+    # eg. last row:
+    # XXXXXXXXXXXXXXXXXXXXYZ
+    # 
+    # Y will be drawn after Z, shifting Z into position.
     def _last_row(row)
-        # On the last row we need to slide the bottom right character
-        # into place. Calculate the new line, attr and an insert sequence
-        # to do that.
-        # 
-        # eg. last row:
-        # XXXXXXXXXXXXXXXXXXXXYZ
-        # 
-        # Y will be drawn after Z, shifting Z into position.
-        
         new_row = row[0..-2]
         z_attr, z_cs, last_text = *row[-1]
         last_cols = StrUtil::calc_width(last_text, 0, last_text.length)
@@ -862,23 +852,22 @@ class Screen < BaseScreen
         return new_row, z_col-y_col, [y_attr, y_cs, y_text]
     end
     
+    # Force the screen to be completely repainted on the next
+    # call to draw_screen().
     def clear()
-        # Force the screen to be completely repainted on the next
-        # call to draw_screen().
         @screen_buf = nil
         @setup_G1 = true
     end
         
+    # Convert AttrSpec instance a to an escape sequence for the terminal
+    #
+    # >>> s = Screen()
+    # >>> a2e = s._attrspec_to_escape
+    # >>> a2e(s.AttrSpec('brown', 'dark green'))
+    # '\\x1b[0;33;42m'
+    # >>> a2e(s.AttrSpec('#fea,underline', '#d0d'))
+    # '\\x1b[0;48;5;229;4;38;5;164m'
     def _attrspec_to_escape(a)
-        # Convert AttrSpec instance a to an escape sequence for the terminal
-
-        # >>> s = Screen()
-        # >>> a2e = s._attrspec_to_escape
-        # >>> a2e(s.AttrSpec('brown', 'dark green'))
-        # '\\x1b[0;33;42m'
-        # >>> a2e(s.AttrSpec('#fea,underline', '#d0d'))
-        # '\\x1b[0;48;5;229;4;38;5;164m'
-
         if a.foreground_high
             fg = "38;5;%d" % a.foreground_number
         elsif a.foreground_basic
@@ -910,17 +899,17 @@ class Screen < BaseScreen
         return Escape::ESC + "[0;%s;%s%sm" % [fg, st, bg]
     end
 
+    # colors -- number of colors terminal supports (1, 16, 88 or 256)
+    #     or nil to leave unchanged
+    # bright_is_bold -- set to true if this terminal uses the bold 
+    #     setting to create bright colors (numbers 8-15), set to false
+    #     if this Terminal can create bright colors without bold or
+    #     nil to leave unchanged
+    # has_underline -- set to true if this terminal can use the
+    #     underline setting, false if it cannot or nil to leave
+    #     unchanged
     def set_terminal_properties(colors=nil, bright_is_bold=nil,
         has_underline=nil)
-        # colors -- number of colors terminal supports (1, 16, 88 or 256)
-        #     or nil to leave unchanged
-        # bright_is_bold -- set to true if this terminal uses the bold 
-        #     setting to create bright colors (numbers 8-15), set to false
-        #     if this Terminal can create bright colors without bold or
-        #     nil to leave unchanged
-        # has_underline -- set to true if this terminal can use the
-        #     underline setting, false if it cannot or nil to leave
-        #     unchanged
         if colors.nil?
             colors = @colors
         end
@@ -947,10 +936,10 @@ class Screen < BaseScreen
         }
     end
 
+    # Attempt to set the terminal palette to default values as taken
+    # from xterm.  Uses number of colors from current 
+    # set_terminal_properties() screen setting.
     def reset_default_terminal_palette
-        # Attempt to set the terminal palette to default values as taken
-        # from xterm.  Uses number of colors from current 
-        # set_terminal_properties() screen setting.
         if @colors == 1
             return
         end
@@ -969,16 +958,15 @@ class Screen < BaseScreen
     end
 
 
+    # entries - list of (index, red, green, blue) tuples.
+    #
+    # Attempt to set part of the terminal pallette (this does not work
+    # on all terminals.)  The changes are sent as a single escape
+    # sequence so they should all take effect at the same time.
+    # 
+    # 0 <= index < 256 (some terminals will only have 16 or 88 colors)
+    # 0 <= red, green, blue < 256
     def modify_terminal_palette(entries)
-        # entries - list of (index, red, green, blue) tuples.
-
-        # Attempt to set part of the terminal pallette (this does not work
-        # on all terminals.)  The changes are sent as a single escape
-        # sequence so they should all take effect at the same time.
-        # 
-        # 0 <= index < 256 (some terminals will only have 16 or 88 colors)
-        # 0 <= red, green, blue < 256
-
         modify = [entries.each{|_|
           index, red, green, blue = *_
           "%d;rgb:%02x/%02x/%02x" % [index, red, green, blue]
