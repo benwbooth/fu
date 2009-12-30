@@ -33,12 +33,6 @@ CURSES_COLORS = {
   'white'=>		[Ncurses::COLOR_WHITE,	1],
 }
 
-# replace control characters with ?'s
-_trans_table = [
-  (0..255).map {|_| _.chr}.join(''), 
-  ('?'*32)+(32..255).map {|_| _.chr}.join('')
-]
-
 class Screen < RealTerminal
   def initialize
     super
@@ -49,11 +43,17 @@ class Screen < RealTerminal
     @has_color = false
     @s = nil
     @cursor_state = nil
-    @_keyqueue = []
+    @keyqueue = []
     @prev_input_resize = 0
     set_input_timeouts
     @last_bstate = 0
     @started = false
+
+    # replace control characters with ?'s
+    @trans_table = [
+      (0..255).map {|_| _.chr}.join(''), 
+      ('?'*32)+(32..255).map {|_| _.chr}.join('')
+    ]
   end
 
   attr_reader :started
@@ -163,8 +163,8 @@ class Screen < RealTerminal
     Ncurses.halfdelay(10) # use set_input_timeouts to adjust
     Ncurses.keypad(@s, 0)
     
-    if !@_signal_keys_set
-      @_old_signal_keys = tty_signal_keys()
+    if !@signal_keys_set
+      @old_signal_keys = tty_signal_keys()
     end
   end
   
@@ -175,7 +175,7 @@ class Screen < RealTerminal
     end
 
     Ncurses.echo()
-    _curs_set(1)
+    curs_set(1)
     begin
       curses.endwin()
     rescue
@@ -184,8 +184,8 @@ class Screen < RealTerminal
     
     @started = false
     
-    if @_old_signal_keys
-      tty_signal_keys(*@_old_signal_keys)
+    if @old_signal_keys
+      tty_signal_keys(*@old_signal_keys)
     end
   end
   
@@ -230,19 +230,19 @@ class Screen < RealTerminal
         @attrconv[name] = (cp << 8)
         @attrconv[name] |= Ncurses::A_BOLD if a
       elsif mono.class == [].class
-        _attr = 0
+        attr = 0
         mono.each{ |m|
-          _attr |= _curses_attr(m)
+          attr |= curses_attr(m)
         }
-        @attrconv[name] = _attr
+        @attrconv[name] = attr
       else
-        _attr = _curses_attr(mono)
-        @attrconv[name] = _attr
+        attr = curses_attr(mono)
+        @attrconv[name] = attr
       end
     }
   end
   
-  def _curses_attr(a)
+  def curses_attr(a)
     if a == 'bold'
       return Ncurses::A_BOLD
     elsif a == 'standout'
@@ -254,7 +254,7 @@ class Screen < RealTerminal
     end
   end
 
-  def _curs_set(x)
+  def curs_set(x)
     if @cursor_state== "fixed" || x == @cursor_state
       return
     end
@@ -266,14 +266,14 @@ class Screen < RealTerminal
     end
   end
   
-  def _clear
+  def clear
     @s.clear()
     @s.refresh()
   end
   
-  def _getch(wait_tenths)
+  def getch(wait_tenths)
     if wait_tenths==0
-      return self._getch_nodelay()
+      return self.getch_nodelay()
     end
     if wait_tenths.nil?
       curses.cbreak()
@@ -284,7 +284,7 @@ class Screen < RealTerminal
     return @s.getch()
   end
   
-  def _getch_nodelay
+  def getch_nodelay
     @s.nodelay(1)
     while true
       # this call fails sometimes, but seems to work when I try again
@@ -365,17 +365,17 @@ class Screen < RealTerminal
   def get_input(raw_keys=false)
     raise unless @started
     
-    keys, raw = _get_input( @max_tenths )
+    keys, raw = get_input( @max_tenths )
     
     # Avoid pegging CPU at 100% when slowly resizing, and work
     # around a bug with some braindead curses implementations that 
     # return "no key" between "window resize" commands 
     if keys==['window resize'] && @prev_input_resize
       while true
-        keys, raw2 = _get_input(@resize_tenths)
+        keys, raw2 = get_input(@resize_tenths)
         raw += raw2
         if !keys
-          keys, raw2 = _get_input(@resize_tenths)
+          keys, raw2 = get_input(@resize_tenths)
           raw += raw2
         end
         if keys!=['window resize']
@@ -404,10 +404,10 @@ class Screen < RealTerminal
   # this works around a strange curses bug with window resizing 
   # not being reported correctly with repeated calls to this
   # function without a doupdate call in between
-  def _get_input(wait_tenths)
+  def get_input(wait_tenths)
     Ncurses.doupdate() 
     
-    key = _getch(wait_tenths)
+    key = getch(wait_tenths)
     resize = false
     raw = []
     keys = []
@@ -417,11 +417,11 @@ class Screen < RealTerminal
       if key==KEY_RESIZE
         resize = true
       elsif key==KEY_MOUSE
-        keys += _encode_mouse_event()
+        keys += encode_mouse_event()
       else
         keys << key
       end
-      key = _getch_nodelay()
+      key = getch_nodelay()
     end
 
     processed = []
@@ -432,17 +432,17 @@ class Screen < RealTerminal
         processed += run
       end
     rescue Escape.MoreInputRequired
-      key = _getch(@complete_tenths)
+      key = getch(@complete_tenths)
       while key >= 0
         raw << key
         if key==KEY_RESIZE
           resize = true
         elsif key==KEY_MOUSE
-          keys += _encode_mouse_event()
+          keys += encode_mouse_event()
         else
           keys.append(key)
         end
-        key = _getch_nodelay()
+        key = getch_nodelay()
       end
       while keys
         run, keys = Escape.process_keyqueue(keys, false)
@@ -458,7 +458,7 @@ class Screen < RealTerminal
   end
     
   # convert to escape sequence
-  def _encode_mouse_event
+  def encode_mouse_event
     last = _next = @last_bstate
     mevent = Ncurses::MEVENT.new
     Ncurses.getmouse(bstate)
@@ -513,7 +513,7 @@ class Screen < RealTerminal
   end
 
   # messy input string (intended for debugging)
-  def _dbg_instr 
+  def dbg_instr 
     Ncurses.echo()
     @s.nodelay(0)
     Ncurses.halfdelay(100)
@@ -524,20 +524,20 @@ class Screen < RealTerminal
   end
 
   # messy output function (intended for debugging)
-  def _dbg_out(str) 
+  def dbg_out(str) 
     @s.clrtoeol()
     @s.addstr(str)
     @s.refresh()
-    _curs_set(1)
+    curs_set(1)
   end
 
   # messy query (intended for debugging)
-  def _dbg_query(question) 
-    _dbg_out(question)
-    return _dbg_instr()
+  def dbg_query(question) 
+    dbg_out(question)
+    return dbg_instr()
   end
   
-  def _dbg_refresh
+  def dbg_refresh
     @s.refresh()
   end
 
@@ -549,7 +549,7 @@ class Screen < RealTerminal
     return cols,rows
   end
 
-  def _setattr(a)
+  def setattr(a)
     if a.nil?
       @s.attrset( 0 )
       return
@@ -583,9 +583,9 @@ class Screen < RealTerminal
       nr = 0
       row.each{ |b|
         a, cs, seg = *b
-        seg.tr!( *_trans_table )
+        seg.tr!( *@trans_table )
         if first || lasta != a
-          _setattr(a)
+          setattr(a)
           lasta = a
         end
         begin
@@ -612,13 +612,13 @@ class Screen < RealTerminal
     }
     if !r.cursor.nil?
       x,y = *r.cursor
-      _curs_set(1)
+      curs_set(1)
       begin
         @s.move(y,x)
       rescue
       end
     else
-      _curs_set(0)
+      curs_set(0)
       @s.move(0,0)
     end
     
@@ -654,7 +654,7 @@ class Test
   def run
     r = FakeRender.new
     text = ["  has_color = "+@ui.has_color.to_s,""]
-    attr = [[],[]]
+    _attr = [[],[]]
     
     @l.each{ |c|
       t = ""
@@ -664,16 +664,16 @@ class Test
         t=t+ (p+27*" ")[0..26]
       }
       text.append( t )
-      attr.append( a )
+      _attr.append( a )
     }
 
     text += ["","return values from get_input(): (q exits)", ""]
-    attr += [[],[],[]]
+    _attr += [[],[],[]]
     cols,rows = @ui.get_cols_rows()
     keys = nil
     while keys!=['q']
       r.text=(text.map {|t| t.ljust(cols)}+[""]*rows)[0..rows-1]
-      r.attr=(attr+[[]]*rows)[0..rows-1]
+      r.attr=(_attr+[[]]*rows)[0..rows-1]
       @ui.draw_screen([cols,rows],r)
       keys, raw = @ui.get_input( raw_keys = true )
       if keys.include? 'window resize'
@@ -695,7 +695,7 @@ class Test
       text << (t + ": "+ raw.to_s)
       _attr << a
       text = text[-rows..-1]
-      attr = attr[-rows..-1]
+      _attr = _attr[-rows..-1]
     end
   end
 end

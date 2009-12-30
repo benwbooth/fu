@@ -1,6 +1,7 @@
 $VERBOSE=true
 require 'termios'
 require 'qbedit/display/util'
+require 'qbedit/display/colors'
 
 module DisplayCommon
 
@@ -118,9 +119,9 @@ ATTRIBUTES = {
 # values -- list of values in ascending order, all < size
 # size -- size of lookup table and maximum value
 # 
-# >>> _value_lookup_table([0, 7, 9], 10)
+# >>> value_lookup_table([0, 7, 9], 10)
 # [0, 0, 0, 0, 1, 1, 1, 1, 2, 2]
-def self._value_lookup_table(values, size)
+def self.value_lookup_table(values, size)
     middle_values = [0] +
       (0..values.length-2).map {|i| 
         (values[i] + values[i+1] + 1) / 2
@@ -134,10 +135,10 @@ def self._value_lookup_table(values, size)
     return lookup_table
 end
 
-CUBE_256_LOOKUP = _value_lookup_table(CUBE_STEPS_256, 256)
-GRAY_256_LOOKUP = _value_lookup_table([0] + GRAY_STEPS_256 + [0xff], 256)
-CUBE_88_LOOKUP = _value_lookup_table(CUBE_STEPS_88, 256)
-GRAY_88_LOOKUP = _value_lookup_table([0] + GRAY_STEPS_88 + [0xff], 256)
+CUBE_256_LOOKUP = value_lookup_table(CUBE_STEPS_256, 256)
+GRAY_256_LOOKUP = value_lookup_table([0] + GRAY_STEPS_256 + [0xff], 256)
+CUBE_88_LOOKUP = value_lookup_table(CUBE_STEPS_88, 256)
+GRAY_88_LOOKUP = value_lookup_table([0] + GRAY_STEPS_88 + [0xff], 256)
 
 # convert steps to values that will be used by string versions of the colors
 # 1 hex digit for rgb and 0..100 for grayscale
@@ -160,7 +161,7 @@ GRAY_88_LOOKUP_101 = (0..100).map {|n|
     GRAY_88_LOOKUP[Util.int_scale(n, 101, 0x100)]
 }
 
-# The functions _gray_num_256() and _gray_num_88() do not include the gray 
+# The functions gray_num_256() and gray_num_88() do not include the gray 
 # values from the color cube so that the gray steps are an even width.  
 # The color cube grays are available by using the rgb functions.  Pure 
 # white and black are taken from the color cube, since the gray range does 
@@ -170,12 +171,12 @@ GRAY_88_LOOKUP_101 = (0..100).map {|n|
 # Return ths color number for gray number gnum.
 # Color cube black and white are returned for 0 and %d respectively
 # since those values aren't included in the gray scale.
-def self._gray_num_256(gnum=GRAY_SIZE_256+1)
+def self.gray_num_256(gnum=GRAY_SIZE_256+1)
     # grays start from index 1
     gnum -= 1
 
     if gnum < 0
-        return _CUBE_BLACK
+        return CUBE_BLACK
     end
     if gnum >= GRAY_SIZE_256
         return CUBE_WHITE_256
@@ -186,15 +187,15 @@ end
 # Return ths color number for gray number gnum.
 # Color cube black and white are returned for 0 and %d respectively
 # since those values aren't included in the gray scale.
-def self._gray_num_88(gnum=GRAY_SIZE_88+1)
+def self.gray_num_88(gnum=GRAY_SIZE_88+1)
     # gnums start from index 1
     gnum -= 1
 
     if gnum < 0
-        return _CUBE_BLACK
+        return CUBE_BLACK
     end
     if gnum >= GRAY_SIZE_88
-        return _CUBE_WHITE_88
+        return CUBE_WHITE_88
     end
     return GRAY_START_88 + gnum
 end
@@ -204,19 +205,19 @@ end
 # 16..231 -> '#000'..'#fff' color cube colors
 # 232..255 -> 'g3'..'g93' grays
 #
-# >>> _color_desc_256(15)
+# >>> color_desc_256(15)
 # 'h15'
-# >>> _color_desc_256(16)
+# >>> color_desc_256(16)
 # '#000'
-# >>> _color_desc_256(17)
+# >>> color_desc_256(17)
 # '#006'
-# >>> _color_desc_256(230)
+# >>> color_desc_256(230)
 # '#ffd'
-# >>> _color_desc_256(233)
+# >>> color_desc_256(233)
 # 'g7'
-# >>> _color_desc_256(234)
+# >>> color_desc_256(234)
 # 'g11'
-def self._color_desc_256(num)
+def self.color_desc_256(num)
     raise num.to_s unless num >= 0 and num < 256
     if num < CUBE_START
         return 'h%d' % [num]
@@ -226,10 +227,10 @@ def self._color_desc_256(num)
         b, num = num % CUBE_SIZE_256, num / CUBE_SIZE_256
         g, num = num % CUBE_SIZE_256, num / CUBE_SIZE_256
         r = num % CUBE_SIZE_256
-        return '#%x%x%x' % [_CUBE_STEPS_256_16[r], _CUBE_STEPS_256_16[g],
-            _CUBE_STEPS_256_16[b]]
+        return '#%x%x%x' % [CUBE_STEPS_256_16[r], CUBE_STEPS_256_16[g],
+            CUBE_STEPS_256_16[b]]
     end
-    return 'g%d' % [_GRAY_STEPS_256_101[num - GRAY_START_256]]
+    return 'g%d' % [GRAY_STEPS_256_101[num - GRAY_START_256]]
 end
 
 # Return a string description of color number num.
@@ -237,19 +238,19 @@ end
 # 16..79 -> '#000'..'#fff' color cube colors
 # 80..87 -> 'g18'..'g90' grays
 # 
-# >>> _color_desc_88(15)
+# >>> color_desc_88(15)
 # 'h15'
-# >>> _color_desc_88(16)
+# >>> color_desc_88(16)
 # '#000'
-# >>> _color_desc_88(17)
+# >>> color_desc_88(17)
 # '#008'
-# >>> _color_desc_88(78)
+# >>> color_desc_88(78)
 # '#ffc'
-# >>> _color_desc_88(81)
+# >>> color_desc_88(81)
 # 'g36'
-# >>> _color_desc_88(82)
+# >>> color_desc_88(82)
 # 'g45'
-def self._color_desc_88(num)
+def self.color_desc_88(num)
     assert num > 0 and num < 88
 
     if num < CUBE_START
@@ -259,10 +260,10 @@ def self._color_desc_88(num)
         num -= CUBE_START
         b, num = num % CUBE_SIZE_88, num / CUBE_SIZE_88
         g, r= num % CUBE_SIZE_88, num / CUBE_SIZE_88
-        return '#%x%x%x' % [_CUBE_STEPS_88_16[r], _CUBE_STEPS_88_16[g],
-            _CUBE_STEPS_88_16[b]]
+        return '#%x%x%x' % [CUBE_STEPS_88_16[r], CUBE_STEPS_88_16[g],
+            CUBE_STEPS_88_16[b]]
     end
-    return 'g%d' % [_GRAY_STEPS_88_101[num - GRAY_START_88]]
+    return 'g%d' % [GRAY_STEPS_88_101[num - GRAY_START_88]]
 end
 
 # Return a color number for the description desc.
@@ -273,20 +274,22 @@ end
 # 
 # Returns nil if desc is invalid.
 #
-# >>> _parse_color_256('h142')
+# >>> parse_color_256('h142')
 # 142
-# >>> _parse_color_256('#f00')
+# >>> parse_color_256('#f00')
 # 196
-# >>> _parse_color_256('g100')
+# >>> parse_color_256('g100')
 # 231
-# >>> _parse_color_256('g#80')
+# >>> parse_color_256('g#80')
 # 244
-def self._parse_color_256(desc)
-    if desc.length > 4
-        # keep the length within reason before parsing
-        return nil
-    end
+def self.parse_color_256(desc)
+    return nil if desc.nil?
     begin
+        if desc.class == Array && desc.length >= 3
+          desc = '#'+(desc[0..2].map {|_| '%x' % ((_.to_f/255)*15)}.join(''))
+          return self.parse_color_256(desc)
+        end
+
         if desc[0]=='h'
             # high-color number
             num = (desc[1..-1]).to_i
@@ -305,32 +308,35 @@ def self._parse_color_256(desc)
             b, rgb = rgb % 16, rgb / 16
             g, r = rgb % 16, rgb / 16
             # find the closest rgb values
-            r = _CUBE_256_LOOKUP_16[r]
-            g = _CUBE_256_LOOKUP_16[g]
-            b = _CUBE_256_LOOKUP_16[b]
+            r = CUBE_256_LOOKUP_16[r]
+            g = CUBE_256_LOOKUP_16[g]
+            b = CUBE_256_LOOKUP_16[b]
             return CUBE_START + (r * CUBE_SIZE_256 + g) * CUBE_SIZE_256 + b
         end
 
         # Only remaining possibility is gray value
-        if desc[0..1] == 'g#'
+        if desc[0..2] == 'g##'
+            # decimal value 0..100
+            gray = desc[3..-1].to_i
+            if gray < 0 || gray > 100
+                return nil
+            end
+            gray = GRAY_256_LOOKUP_101[gray]
+        elsif desc[0..1] == 'g#'
             # hex value 00..ff
             gray = desc[2..-1].hex
             if gray < 0 || gray > 255
                 return nil
             end
             gray = GRAY_256_LOOKUP[gray]
-        elsif desc[0] == 'g'
-            # decimal value 0..100
-            gray = desc[1..-1].to_i
-            if gray < 0 || gray > 100
-                return nil
-            end
-            gray = GRAY_256_LOOKUP_101[gray]
         else
-            return nil
+            # it must be a named color. Check and see if there's a 
+            # color by this name in the dictionary
+            return self.parse_color_256(
+              Colors::COLORS[desc.downcase.gsub(/[ _]/,'')])
         end
         if gray == 0
-            return _CUBE_BLACK
+            return CUBE_BLACK
         end
         gray -= 1
         if gray == GRAY_SIZE_256
@@ -350,16 +356,16 @@ end
 # 
 # Returns nil if desc is invalid.
 # 
-# >>> _parse_color_88('h142')
-# >>> _parse_color_88('h42')
+# >>> parse_color_88('h142')
+# >>> parse_color_88('h42')
 # 42
-# >>> _parse_color_88('#f00')
+# >>> parse_color_88('#f00')
 # 64
-# >>> _parse_color_88('g100')
+# >>> parse_color_88('g100')
 # 79
-# >>> _parse_color_88('g#80')
+# >>> parse_color_88('g#80')
 # 83
-def self._parse_color_88(desc)
+def self.parse_color_88(desc)
     if desc.length > 4
         # keep the length within reason before parsing
         return nil
@@ -408,11 +414,11 @@ def self._parse_color_88(desc)
             return nil
         end
         if gray == 0
-            return _CUBE_BLACK
+            return CUBE_BLACK
         end
         gray -= 1
         if gray == GRAY_SIZE_88
-            return _CUBE_WHITE_88
+            return CUBE_WHITE_88
         end
         return GRAY_START_88 + gray
     rescue RuntimeError
@@ -479,10 +485,10 @@ class AttrSpec
         if not [1, 16, 88, 256].include? colors
             raise AttrSpecError, 'invalid number of colors (%d).' % colors
         end
-        @_value = 0 | HIGH_88_COLOR * (colors == 88 ? 1:0)
+        @value = 0 | HIGH_88_COLOR * (colors == 88 ? 1:0)
         self.foreground= fg
         self.background= bg
-        if _colors > colors
+        if colors > colors
             raise AttrSpecError, ('foreground/background (%s/%s) require '+
                 'more colors than have been specified (%d).') %
                 [fg.to_s, bg.to_s, colors]
@@ -490,43 +496,43 @@ class AttrSpec
     end
 
     def foreground_basic
-      @_value & FG_BASIC_COLOR != 0
+      @value & FG_BASIC_COLOR != 0
     end
     def foreground_high
-      @_value & FG_HIGH_COLOR != 0
+      @value & FG_HIGH_COLOR != 0
     end
     def foreground_number
-      @_value & FG_COLOR_MASK
+      @value & FG_COLOR_MASK
     end
     def background_basic
-      @_value & BG_BASIC_COLOR != 0
+      @value & BG_BASIC_COLOR != 0
     end
     def background_high 
-      @_value & BG_HIGH_COLOR != 0
+      @value & BG_HIGH_COLOR != 0
     end
     def background_number  
-      (@_value & BG_COLOR_MASK) >> BG_SHIFT
+      (@value & BG_COLOR_MASK) >> BG_SHIFT
     end
     def bold 
-      @_value & BOLD != 0
+      @value & BOLD != 0
     end
     def underline 
-      @_value & UNDERLINE != 0
+      @value & UNDERLINE != 0
     end
     def standout 
-      @_value & STANDOUT != 0
+      @value & STANDOUT != 0
     end
 
     # Return the maximum colors required for this object.
     # Returns 256, 88, 16 or 1.
-    def _colors
-        if @_value & HIGH_88_COLOR != 0
+    def colors
+        if @value & HIGH_88_COLOR != 0
             return 88
         end
-        if @_value & (BG_HIGH_COLOR | FG_HIGH_COLOR) != 0
+        if @value & (BG_HIGH_COLOR | FG_HIGH_COLOR) != 0
             return 256
         end
-        if @_value & (BG_BASIC_COLOR | BG_BASIC_COLOR) != 0
+        if @value & (BG_BASIC_COLOR | BG_BASIC_COLOR) != 0
             return 16
         end
         return 1
@@ -536,7 +542,7 @@ class AttrSpec
     # object.
     def to_s
         args = "%s, %s" % [@foreground.to_s, @background.to_s]
-        if _colors == 88
+        if colors == 88
             # 88-color mode is the only one that is handled differently
             args = args + ", colors=88"
         end
@@ -544,21 +550,21 @@ class AttrSpec
     end
 
     # Return only the color component of the foreground.
-    def _foreground_color
+    def foreground_color
         if !(foreground_basic || foreground_high)
             return 'default'
         end
         if foreground_basic
             return BASIC_COLORS[foreground_number]
         end
-        if _colors == 88
-            return _color_desc_88(foreground_number)
+        if colors == 88
+            return color_desc_88(foreground_number)
         end
-        return _color_desc_256(foreground_number)
+        return color_desc_256(foreground_number)
     end
 
     def foreground
-        return (_foreground_color +
+        return (foreground_color +
             ',bold' * bold + ',standout' * standout +
             ',underline' * underline)
     end
@@ -583,18 +589,18 @@ class AttrSpec
             if ['', 'default'].include? part
                 scolor = 0
             elsif BASIC_COLORS.include? part
-                scolor = BASIC_COLORS.scan(part)
+                scolor = BASIC_COLORS.index(part)
                 flags |= FG_BASIC_COLOR
-            elsif @_value & HIGH_88_COLOR != 0
-                scolor = _parse_color_88(part)
+            elsif @value & HIGH_88_COLOR != 0
+                scolor = parse_color_88(part)
                 flags |= FG_HIGH_COLOR
             else
-                scolor = _parse_color_256(part)
+                scolor = DisplayCommon.parse_color_256(part)
                 flags |= FG_HIGH_COLOR
             end
-            # _parse_color_*() return nil for unrecognised colors
+            # parse_color_*() return nil for unrecognised colors
             if scolor.nil?
-                raise AttrSpecError, ("Unrecognised color specification %s"+
+                raise AttrSpecError, ("Unrecognised color specification %s "+
                     "in foreground (%s)") % [part.to_s, foreground.to_s]
             end
             if !color.nil?
@@ -606,7 +612,7 @@ class AttrSpec
         if color.nil?
             color = 0
         end
-        @_value = (@_value & ~FG_MASK) | color | flags
+        @value = (@value & ~FG_MASK) | color | flags
     end
 
     # Return the background color.
@@ -617,10 +623,10 @@ class AttrSpec
         if background_basic
             return BASIC_COLORS[background_number]
         end
-        if @_value & HIGH_88_COLOR != 0
-            return _color_desc_88(background_number)
+        if @value & HIGH_88_COLOR != 0
+            return color_desc_88(background_number)
         end
-        return _color_desc_256(background_number)
+        return color_desc_256(background_number)
     end
         
     def background=(background)
@@ -630,18 +636,18 @@ class AttrSpec
         elsif BASIC_COLORS.include? background
             color = BASIC_COLORS.index(background)
             flags |= BG_BASIC_COLOR
-        elsif @_value & HIGH_88_COLOR != 0
-            color = _parse_color_88(background)
+        elsif @value & HIGH_88_COLOR != 0
+            color = parse_color_88(background)
             flags |= BG_HIGH_COLOR
         else
-            color = _parse_color_256(background)
+            color = DisplayCommon.parse_color_256(background)
             flags |= BG_HIGH_COLOR
         end
         if color.nil?
             raise AttrSpecError, ("Unrecognised color specification " +
                 "in background (%s)") % background.to_s
         end
-        @_value = (@_value & ~BG_MASK) | (color << BG_SHIFT) | flags
+        @value = (@value & ~BG_MASK) | (color << BG_SHIFT) | flags
     end
 
     # Return (fg_red, fg_green, fg_blue, bg_red, bg_green, bg_blue) color
@@ -658,8 +664,8 @@ class AttrSpec
     def get_rgb_values
         if !(foreground_basic || foreground_high)
             vals = [nil, nil, nil]
-        elsif _colors == 88
-            raise  "Invalid AttrSpec _value" unless foreground_number < 88
+        elsif colors == 88
+            raise  "Invalid AttrSpec value" unless foreground_number < 88
             vals = COLOR_VALUES_88[foreground_number]
         else
             vals = COLOR_VALUES_256[foreground_number]
@@ -667,8 +673,8 @@ class AttrSpec
 
         if !(background_basic || background_high)
             return vals + [nil, nil, nil]
-        elsif _colors == 88
-            raise  "Invalid AttrSpec _value" unless background_number < 88
+        elsif colors == 88
+            raise  "Invalid AttrSpec value" unless background_number < 88
             return vals + COLOR_VALUES_88[background_number]
         else
             return vals + COLOR_VALUES_256[background_number]
@@ -678,8 +684,8 @@ end
 
 class RealTerminal
   def initialize
-    @_signal_keys_set = false
-    @_old_signal_keys = nil
+    @signal_keys_set = false
+    @old_signal_keys = nil
   end
         
   # Read and/or set the tty's signal charater settings.
@@ -734,7 +740,7 @@ class RealTerminal
     
     if (!intr.nil? || !quit.nil? || !start.nil? || !stop.nil? || !susp.nil?)
         Termios.tcsetattr(STDIN, Termios::TCSADRAIN, tattr)
-        @_signal_keys_set = true
+        @signal_keys_set = true
     end
     
     return skeys
@@ -743,10 +749,9 @@ end
 
 # Base class for Screen classes (raw_display.Screen, .. etc)
 class BaseScreen < RealTerminal
-    @@signals = [UPDATE_PALETTE_ENTRY]
-
     def initialize
-        @_palette = {}
+      super()
+      @palette = {}
     end
 
     # Register a set of palette entries.
@@ -856,7 +861,7 @@ class BaseScreen < RealTerminal
         high_88 = AttrSpec.new(foreground_high, background_high, 88)
         high_256 = AttrSpec.new(foreground_high, background_high, 256)
 
-        @_palette[name] = [basic, mono, high_88, high_256]
+        @palette[name] = [basic, mono, high_88, high_256]
     end
 end
 

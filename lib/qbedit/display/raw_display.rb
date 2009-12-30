@@ -41,12 +41,6 @@ ISPEED = 4
 OSPEED = 5
 CC = 6
 
-# replace control characters with ?'s
-_trans_table = [
-  (0..255).map {|_| _.chr}.join(''), 
-  ('?'*32)+(32..255).map {|_| _.chr}.join('')
-]
-
 class ScreenError < Exception
 end
 
@@ -54,42 +48,98 @@ class Screen < DisplayCommon::BaseScreen
     def initialize(term_output_file=$stdout, term_input_file=$stdin)
         # Initialize a screen that directly prints escape codes to an output
         # terminal.
-        super
-        @_pal_escape = {}
+        super()
+        @pal_escape = {}
         #signals.connect_signal(UPDATE_PALETTE_ENTRY, 
-        #    _on_update_palette_entry)
+        #    on_update_palette_entry)
         @colors = 256 # FIXME: detect this
         @has_underline = true # FIXME: detect this
         register_palette_entry( nil, 'default','default')
-        @_keyqueue = []
+        @keyqueue = []
         @prev_input_resize = 0
         set_input_timeouts()
         @screen_buf = nil
-        @_resized = false
+        @resized = false
         @maxrow = nil
         @gpm_mev = nil
         @gpm_event_pending = false
         @last_bstate = 0
-        @_setup_G1_done = false
-        @_rows_used = nil
-        @_cy = 0
-        @_started = false
+        @setup_G1_done = false
+        @rows_used = nil
+        @cy = 0
+        @started = false
         @bright_is_bold = !ENV['TERM'].include?('xterm')
-        @_next_timeout = nil
-        @_term_output_file = term_output_file
-        @_term_input_file = term_input_file
+        @next_timeout = nil
+        @term_output_file = term_output_file
+        @term_input_file = term_input_file
         # pipe for signalling external event loops about resize events
-        @_resize_pipe_rd, @_resize_pipe_wr = IO.pipe
-        @_resize_pipe_rd.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK);
+        @resize_pipe_rd, @resize_pipe_wr = IO.pipe
+        @resize_pipe_rd.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK);
+
+        # replace control characters with ?'s
+        @trans_table = [
+          (0..255).map {|_| _.chr}.join(''), 
+          ('?'*32)+(32..255).map {|_| _.chr}.join('')
+        ]
+
+        @run_input_iter = Fiber.new do
+            # clean out the pipe used to signal external event loops
+            # that a resize has occured
+            def empty_resize_pipe
+                while !@resize_pipe_rd.read(1).nil?
+                end
+            end
+
+            while true
+                processed = []
+                codes = get_gpm_codes() + get_keyboard_codes()
+
+                original_codes = codes
+                begin
+                    while codes.length > 0
+                        run, codes = Escape.process_keyqueue(codes, true)
+                        processed += run
+                    end
+                rescue Escape::MoreInputRequired
+                    k = original_codes.length - codes.length
+                    Fiber.yield(@complete_wait, processed, original_codes[0..k-1])
+                    empty_resize_pipe()
+                    original_codes = codes
+                    processed = []
+
+                    codes += get_keyboard_codes() + get_gpm_codes()
+                    while codes.length > 0
+                        run, codes = Escape.process_keyqueue(codes, false)
+                        processed.extend(run)
+                    end
+                end
+                
+                if @resized
+                    processed.append('window resize')
+                    @resized = false
+                end
+
+                Fiber.yield(@max_wait, processed, original_codes)
+                empty_resize_pipe()
+            end
+        end
+
+        # This generator is a placeholder for when the screen is stopped
+        # to always return that no input is available.
+        @fake_input_iter = Fiber.new do
+            while true
+                Fiber.yield(@max_wait, [], [])
+            end
+        end
     end
 
     def started
-      @_started
+      @started
     end
 
-    def _on_update_palette_entry(name, *attrspecs)
+    def on_update_palette_entry(name, *attrspecs)
         # copy the attribute to a dictionary containing the escape seqences
-        @_pal_escape[name] = _attrspec_to_escape(
+        @pal_escape[name] = attrspec_to_escape(
             attrspecs[{16=>0,1=>1,88=>2,256=>3}[@colors]])
     end
 
@@ -110,32 +160,32 @@ class Screen < DisplayCommon::BaseScreen
 
         @max_wait = max_wait
         if !max_wait.nil?
-            if @_next_timeout.nil?
-                @_next_timeout = max_wait
+            if @next_timeout.nil?
+                @next_timeout = max_wait
             else
-                @_next_timeout = min(@_next_timeout, @max_wait)
+                @next_timeout = min(@next_timeout, @max_wait)
             end
         end
         @complete_wait = complete_wait
         @resize_wait = resize_wait
     end
 
-    def _sigwinch_handler(signum, frame)
-        if !@_resized
-            @_resize_pipe_wr.write('R')
+    def sigwinch_handler(signum, frame)
+        if !@resized
+            @resize_pipe_wr.write('R')
         end
-        @_resized = true
+        @resized = true
         @screen_buf = nil
     end
       
     # Called in the startup of run wrapper to set the SIGWINCH 
-    # signal handler to @_sigwinch_handler.
+    # signal handler to @sigwinch_handler.
     #
     # Override this function to call from main thread in threaded
     # applications.
     def signal_init
         Signal.trap('WINCH') do 
-          _sigwinch_handler
+          sigwinch_handler
         end
     end
     
@@ -154,12 +204,12 @@ class Screen < DisplayCommon::BaseScreen
         # After calling this function get_input will include mouse
         # click events along with keystrokes.
 
-        @_term_output_file.write(escape.MOUSE_TRACKING_ON)
+        @term_output_file.write(Escape::MOUSE_TRACKING_ON)
 
-        _start_gpm_tracking()
+        start_gpm_tracking()
     end
     
-    def _start_gpm_tracking
+    def start_gpm_tracking
         if !File.exists? "/usr/bin/mev"
             return
         end
@@ -174,15 +224,15 @@ class Screen < DisplayCommon::BaseScreen
         @gpm_mev = m
     end
     
-    def _stop_gpm_tracking
+    def stop_gpm_tracking
         Process.kill(signal.SIGINT, @gpm_mev.pid)
         Process.waitpid(@gpm_mev.pid, 0)
         @gpm_mev = nil
     end
 
     # Put terminal into a raw mode.
-    def setraw(io, _when=Termios::TCSAFLUSH)
-        mode = Termios.tcgetattr(io)
+    def setraw(_when=Termios::TCSAFLUSH)
+        mode = Termios.tcgetattr(@term_input_file)
         mode.iflag |= ~(Termios::BRKINT | Termios::ICRNL | Termios::INPCK | 
                         Termios::ISTRIP | Termios::IXON)
         mode.oflag &= ~(Termios::OPOST)
@@ -190,77 +240,77 @@ class Screen < DisplayCommon::BaseScreen
         mode.cflag |= Termios::CS8
         mode.lflag &= ~(Termios::ECHO | Termios::ICANON | Termios::IEXTEN | 
                         Termios::ISIG)
-        mode.cc.vmin = 1
-        mode.cc.vtime = 0
-        Termios.tcsetattr(io, _when, mode)
+        mode.cc[Termios::VMIN] = 1
+        mode.cc[Termios::VTIME] = 0
+        Termios.tcsetattr(@term_input_file, _when, mode)
     end
 
     # Put terminal into a cbreak mode.
-    def setcbreak(io, _when=Termios::TCSAFLUSH)
-        mode = tcgetattr(io)
+    def setcbreak( _when=Termios::TCSAFLUSH)
+        mode = Termios.tcgetattr(@term_input_file)
         mode.lflag &= ~(Termios::ECHO | Termios::ICANON)
-        mode.cc.vmin = 1
-        mode.cc.vtime = 0
-        Termios.tcsetattr(io, _when, mode)
+        mode.cc[Termios::VMIN] = 1
+        mode.cc[Termios::VTIME] = 0
+        Termios.tcsetattr(@term_input_file, _when, mode)
     end
 
     # Initialize the screen and input mode.
     # 
     # alternate_buffer -- use alternate screen buffer
     def start(alternate_buffer=true)
-        raise if @_started
+        raise if @started
         if alternate_buffer
-            @_term_output_file.write(Escape::SWITCH_TO_ALTERNATE_BUFFER)
-            @_rows_used = nil
+            @term_output_file.write(Escape::SWITCH_TO_ALTERNATE_BUFFER)
+            @rows_used = nil
         else
-            @_rows_used = 0
+            @rows_used = 0
         end
 
-        @_old_termios_settings = Termios.tcgetattr(0)
+        @old_termios_settings = Termios.tcgetattr(@term_input_file)
         signal_init()
-        setcbreak(@_term_input_file)
-        @_alternate_buffer = alternate_buffer
-        @_input_iter = @_run_input_iter.resume
-        @_next_timeout = @max_wait
+        setcbreak
+        @alternate_buffer = alternate_buffer
+        @input_iter = @run_input_iter.resume
+        @next_timeout = @max_wait
         
-        if !@_signal_keys_set
-            @_old_signal_keys = tty_signal_keys()
+        if !@signal_keys_set
+            @old_signal_keys = tty_signal_keys()
         end
 
-        @_started = true
+        @started = true
     end
     
     # Restore the screen.
     def stop
         clear()
-        if !@_started
+        if !@started
             return
         end
         signal_restore()
-        Termios.tcsetattr(0, Termios::TCSADRAIN, 
-            @_old_termios_settings)
+        Termios.tcsetattr(@term_input_file, Termios::TCSADRAIN, 
+            @old_termios_settings)
         move_cursor = ""
-        if @gpm_mev
-            _stop_gpm_tracking()
+        if !@gpm_mev.nil?
+            stop_gpm_tracking()
         end
-        if @_alternate_buffer
+        if @alternate_buffer
             move_cursor = Escape::RESTORE_NORMAL_BUFFER
         elsif !@maxrow.nil?
             move_cursor = Escape.set_cursor_position(0, @maxrow)
         end
 
-        @_term_output_file.write(_attrspec_to_escape(AttrSpec('',''))+
+        @term_output_file.write(attrspec_to_escape(AttrSpec('',''))+
             Escape::SI+
             Escape::MOUSE_TRACKING_OFF+
             Escape::SHOW_CURSOR+
             move_cursor + "\n" + Escape::SHOW_CURSOR )
-        @_input_iter = @_fake_input_iter.resume
+        @input_iter = @fake_input_iter.resume
 
-        if @_old_signal_keys
-            tty_signal_keys(*@_old_signal_keys)
+        if @old_signal_keys
+            tty_signal_keys(*@old_signal_keys)
         end
         
-        @_started = false
+        @started = false
     end
         
     # Call start to initialize screen, then call fn.  
@@ -317,19 +367,19 @@ class Screen < DisplayCommon::BaseScreen
     # Mouse button release: ('mouse release', 0, 18, 13),
     #                       ('ctrl mouse release', 0, 17, 23)
     def get_input(raw_keys=false)
-        raise if !@_started
+        raise if !@started
         
-        _wait_for_input_ready(@_next_timeout)
-        @_next_timeout, keys, raw = @_input_iter.next
+        wait_for_input_ready(@next_timeout)
+        @next_timeout, keys, raw = @input_iter.next
         
         # Avoid pegging CPU at 100% when slowly resizing
         if keys == ['window resize'] && @prev_input_resize
             while true
-                _wait_for_input_ready(@resize_wait)
-                @_next_timeout, keys, raw2 = @_input_iter.next
+                wait_for_input_ready(@resize_wait)
+                @next_timeout, keys, raw2 = @input_iter.next
                 raw += raw2
                 #if !keys
-                #    keys, raw2 = @_get_input(@resize_wait)
+                #    keys, raw2 = @get_input(@resize_wait)
                 #    raw += raw2
                 #end
                 if keys != ['window resize']
@@ -360,7 +410,7 @@ class Screen < DisplayCommon::BaseScreen
     #
     # Use this method if you are implementing yout own event loop.
     def get_input_descriptors
-        fd_list = [@_term_input_file, @_resize_pipe_rd]
+        fd_list = [@term_input_file, @resize_pipe_rd]
         if !@gpm_mev.nil?
             fd_list << @gpm_mev.stdout
         end
@@ -379,64 +429,14 @@ class Screen < DisplayCommon::BaseScreen
     # This method expects to be called in next_input_timeout seconds
     # (a floating point number) if there is no input waiting.
     def get_input_nonblocking
-        raise if !@_started
-        return @_input_iter.next()
+        raise if !@started
+        return @input_iter.next()
     end
 
-    @_run_input_iter = Fiber.new do
-        # clean out the pipe used to signal external event loops
-        # that a resize has occured
-        def empty_resize_pipe
-            while !@_resize_pipe_rd.read(1).nil?
-            end
-        end
-
-        while true
-            processed = []
-            codes = _get_gpm_codes() + _get_keyboard_codes()
-
-            original_codes = codes
-            begin
-                while codes
-                    run, codes = Escape.process_keyqueue(codes, true)
-                    processed += run
-                end
-            rescue Escape::MoreInputRequired
-                k = original_codes.length - codes.length
-                Fiber.yield(@complete_wait, processed, original_codes[0..k-1])
-                empty_resize_pipe()
-                original_codes = codes
-                processed = []
-
-                codes += _get_keyboard_codes() + _get_gpm_codes()
-                while codes
-                    run, codes = Escape.process_keyqueue(codes, false)
-                    processed.extend(run)
-                end
-            end
-            
-            if @_resized
-                processed.append('window resize')
-                @_resized = false
-            end
-
-            Fiber.yield(@max_wait, processed, original_codes)
-            empty_resize_pipe()
-        end
-    end
-
-    # This generator is a placeholder for when the screen is stopped
-    # to always return that no input is available.
-    @_fake_input_iter = Fiber.new do
-        while true
-            Fiber.yield(@max_wait, [], [])
-        end
-    end
-
-    def _get_keyboard_codes
+    def get_keyboard_codes
         codes = []
         while true
-            code = _getch_nodelay()
+            code = getch_nodelay()
             if code < 0
                 break
             end
@@ -445,12 +445,12 @@ class Screen < DisplayCommon::BaseScreen
         return codes
     end
 
-    def _get_gpm_codes
+    def get_gpm_codes
         codes = []
         if !@gpm_mev.nil?
             begin
                 while true
-                    codes += _encode_gpm_event()
+                    codes += encode_gpm_event()
                 end
             rescue IOError, e
                 if e.args[0] != 11
@@ -461,25 +461,28 @@ class Screen < DisplayCommon::BaseScreen
         return codes
     end
 
-    def _wait_for_input_ready(timeout)
+    def wait_for_input_ready(timeout)
         ready = nil
-        fd_list = [@_term_input_file]
+        fd_list = [@term_input_file]
         if !@gpm_mev.nil?
             fd_list << @gpm_mev.stdout
         end
         while true
             begin
                 if timeout.nil?
-                    ready,w,err = *IO.select(fd_list, [], fd_list)
+                    ready,w,err = IO.select(fd_list, [], fd_list)
                 else
-                    ready,w,err = *IO.select(fd_list,[], fd_list, timeout)
+                    ready,w,err = IO.select(fd_list,[], fd_list, timeout)
                 end
+                ready ||= []
+                w ||= []
+                err ||= []
                 break
             rescue IOError, e
                 if e.args[0] != 4
                     raise
                 end
-                if @_resized
+                if @resized
                     ready = []
                     break
                 end
@@ -488,26 +491,26 @@ class Screen < DisplayCommon::BaseScreen
         return ready    
     end
         
-    def _getch(timeout)
-        ready = _wait_for_input_ready(timeout)
-        if @gpm_mev.nil?
+    def getch(timeout)
+        ready = wait_for_input_ready(timeout)
+        if !@gpm_mev.nil?
             if ready.include? @gpm_mev.stdout
                 @gpm_event_pending = true
             end
         end
-        if ready.include? @_term_input_file
-            return @_term_input_file.read(1).ord
+        if ready.include? @term_input_file
+            return @term_input_file.read(1).ord
         end
         return -1
     end
     
-    def _encode_gpm_event
+    def encode_gpm_event
         @gpm_event_pending = false
         s = @gpm_mev.stdout.gets
         l = s.split(",")
         if l.length != 6
             # unexpected output, stop tracking
-            _stop_gpm_tracking()
+            stop_gpm_tracking()
             return []
         end
         ev, x, y, ign, b, m = *s.split(",")
@@ -578,8 +581,8 @@ class Screen < DisplayCommon::BaseScreen
         return l
     end
     
-    def _getch_nodelay()
-        return _getch(0)
+    def getch_nodelay()
+        return getch(0)
     end
 
     # Return the terminal dimensions (num columns, num rows).
@@ -604,41 +607,41 @@ class Screen < DisplayCommon::BaseScreen
     end
     
     # Initialize the G1 character set to graphics mode if required.
-    def _setup_G1
-        if @_setup_G1_done
+    def setup_G1
+        if @setup_G1_done
             return
         end
         
         while true
             begin
-                @_term_output_file.write(Escape::DESIGNATE_G1_SPECIAL)
-                @_term_output_file.flush
+                @term_output_file.write(Escape::DESIGNATE_G1_SPECIAL)
+                @term_output_file.flush
                 break
             rescue IOError, e
             end
         end
-        @_setup_G1_done = true
+        @setup_G1_done = true
     end
     
     def draw_screen(maxrowcol, r)
-        maxcol, maxrow = *maxrowcol
+        maxrow, maxcol = *maxrowcol
         # Paint screen with rendered canvas.
-        raise unless @_started
+        raise unless @started
         raise unless maxrow == r.rows
 
-        _setup_G1()
+        setup_G1()
         
-        if @_resized
+        if @resized
             # handle resize before trying to draw screen
             return
         end
         
-        o = [escape.HIDE_CURSOR, _attrspec_to_escape(AttrSpec('',''))]
+        o = [Escape::HIDE_CURSOR, attrspec_to_escape(AttrSpec('',''))]
         
         def partial_display
             # returns true if the screen is in partial display mode
             # ie. only some rows belong to the display
-            return !@_rows_used.nil?
+            return !@rows_used.nil?
         end
 
         if !partial_display()
@@ -651,35 +654,35 @@ class Screen < DisplayCommon::BaseScreen
             osb = []
         end
         sb = []
-        cy = @_cy
+        cy = @cy
         y = -1
 
         def set_cursor_home
             if !partial_display()
-                return Escape::set_cursor_position(0, 0)
+                return Escape.set_cursor_position(0, 0)
             end
-            return (Escape::CURSOR_HOME_COL + Escape::move_cursor_up(cy))
+            return (Escape::CURSOR_HOME_COL + Escape.move_cursor_up(cy))
         end
         
         def set_cursor_row(y)
             if !partial_display()
-                return Escape::set_cursor_position(0, y)
+                return Escape.set_cursor_position(0, y)
             end
-            return Escape::move_cursor_down(y - cy)
+            return Escape.move_cursor_down(y - cy)
         end
 
         def set_cursor_position(x, y)
             if !partial_display()
-                return Escape::set_cursor_position(x, y)
+                return Escape.set_cursor_position(x, y)
             end
             if cy > y
                 return ("\b" + Escape::CURSOR_HOME_COL +
-                    Escape::move_cursor_up(cy - y) +
-                    Escape::move_cursor_right(x))
+                    Escape.move_cursor_up(cy - y) +
+                    Escape.move_cursor_right(x))
             end
-            return ("\b" + escape.CURSOR_HOME_COL +
-                escape.move_cursor_down(y - cy) +
-                escape.move_cursor_right(x))
+            return ("\b" + Escape::CURSOR_HOME_COL +
+                Escape.move_cursor_down(y - cy) +
+                Escape.move_cursor_right(x))
         end
         
         def is_blank_row(row)
@@ -693,14 +696,14 @@ class Screen < DisplayCommon::BaseScreen
         end
 
         def attr_to_escape(a)
-            if @_pal_escape.include? a
-                return @_pal_escape[a]
+            if @pal_escape.include? a
+                return @pal_escape[a]
             elsif a.class == DisplayCommon::AttrSpec
-                return _attrspec_to_escape(a)
+                return attrspec_to_escape(a)
             end
             # undefined attributes use default/default
             # TODO: track and report these
-            return _attrspec_to_escape(AttrSpec('default','default'))
+            return attrspec_to_escape(AttrSpec('default','default'))
         end
 
         ins = nil
@@ -719,11 +722,11 @@ class Screen < DisplayCommon::BaseScreen
             
             # leave blank lines off display when we are using
             # the default screen buffer (allows partial screen)
-            if partial_display() && y > @_rows_used
+            if partial_display() && y > @rows_used
                 if is_blank_row(row)
                     next
                 end
-                @_rows_used = y
+                @rows_used = y
             end
             
             if y || partial_display()
@@ -735,20 +738,24 @@ class Screen < DisplayCommon::BaseScreen
             cy = y 
             
             if y == maxrow-1
-                row, back, ins = _last_row(row)
+                row, back, ins = last_row(row)
             end
 
             first = true
             lasta = lastcs = nil
-            row.each{|_|
-                a, cs, run = *_
+            row.each{ |_|
+                a,cs,run = _
+                if run.length == 0
+                  o << Escape.move_cursor_right(1)
+                  next
+                end
 
-                run.tr!(*_trans_table)
+                run.tr!(*@trans_table)
                 if first || lasta != a
                     o << attr_to_escape(a)
                     lasta = a
                 end
-                if first || lastcs != cs
+                if first || (lastcs != cs)
                     raise cs.to_s unless [nil, "0"].include? cs
                     if cs.nil?
                         o << Escape::SI
@@ -763,8 +770,8 @@ class Screen < DisplayCommon::BaseScreen
             if ins
                 inserta, insertcs, inserttext = *ins
                 ias = attr_to_escape(inserta)
-                raise unless [[nil, "0"], insertcs.to_s].include? insertcs
-                if cs.nil?
+                raise insertcs.to_s unless [nil, "0"].include? insertcs
+                if insertcs.nil?
                     icss = Escape::SI
                 else
                     icss = Escape::SO
@@ -779,24 +786,24 @@ class Screen < DisplayCommon::BaseScreen
             x,y = r.cursor
             o += [set_cursor_position(x, y), 
                 Escape::SHOW_CURSOR  ]
-            @_cy = y
+            @cy = y
         end
         
-        if @_resized
+        if @resized
             # handle resize before trying to draw screen
             return
         end
         begin
             k = 0
             o.each{ |l|
-                @_term_output_file.write( l )
+                @term_output_file.write( l )
                 k += l.length
                 if k > 1024
-                    @_term_output_file.flush
+                    @term_output_file.flush
                     k = 0
                 end
             }
-            @_term_output_file.flush
+            @term_output_file.flush
         rescue IOError, e
             # ignore interrupted syscall
             if e.args[0] != 4
@@ -817,7 +824,7 @@ class Screen < DisplayCommon::BaseScreen
     # XXXXXXXXXXXXXXXXXXXXYZ
     # 
     # Y will be drawn after Z, shifting Z into position.
-    def _last_row(row)
+    def last_row(row)
         new_row = row[0..-2]
         z_attr, z_cs, last_text = *row[-1]
         last_cols = StrUtil::calc_width(last_text, 0, last_text.length)
@@ -833,8 +840,8 @@ class Screen < DisplayCommon::BaseScreen
             nlast_offs, y_col = StrUtil.calc_text_pos(nlast_text, 0,
                 nlast_text.length, nlast_cols-1)
             y_text = nlast_text[nlast_offs..-1]
-            if nlast_offs
-                new_row += [y_attr, y_cs, nlast_text[0..nlast_offs-1]]
+            if nlast_offs != 0
+                new_row << [y_attr, y_cs, nlast_text[0..nlast_offs-1]]
             end
         else
             z_text = last_text[last_offs..-1]
@@ -843,12 +850,12 @@ class Screen < DisplayCommon::BaseScreen
             nlast_offs, y_col = StrUtil::calc_text_pos(last_text, 0,
                 last_offs, nlast_cols-1)
             y_text = last_text[nlast_offs..last_offs-1]
-            if nlast_offs
-                new_row += [y_attr, y_cs, last_text[0..nlast_offs-1]]
+            if nlast_offs != 0
+                new_row << [y_attr, y_cs, last_text[0..nlast_offs-1]]
             end
         end
         
-        new_row += [z_attr, z_cs, z_text]
+        new_row << [z_attr, z_cs, z_text]
         return new_row, z_col-y_col, [y_attr, y_cs, y_text]
     end
     
@@ -862,12 +869,12 @@ class Screen < DisplayCommon::BaseScreen
     # Convert AttrSpec instance a to an escape sequence for the terminal
     #
     # >>> s = Screen()
-    # >>> a2e = s._attrspec_to_escape
+    # >>> a2e = s.attrspec_to_escape
     # >>> a2e(s.AttrSpec('brown', 'dark green'))
     # '\\x1b[0;33;42m'
     # >>> a2e(s.AttrSpec('#fea,underline', '#d0d'))
     # '\\x1b[0;48;5;229;4;38;5;164m'
-    def _attrspec_to_escape(a)
+    def attrspec_to_escape(a)
         if a.foreground_high
             fg = "38;5;%d" % a.foreground_number
         elsif a.foreground_basic
@@ -883,7 +890,7 @@ class Screen < DisplayCommon::BaseScreen
         else
             fg = "39"
         end
-        st = "1;" * a.bold + "4;" * a.underline + "7;" * a.standout
+        st = "1;" * (a.bold ? 1:0) + "4;" * (a.underline ? 1:0) + "7;" * (a.standout ? 1:0)
         if a.background_high
             bg = "48;5;%d" % a.background_number
         elsif a.background_basic
@@ -930,9 +937,9 @@ class Screen < DisplayCommon::BaseScreen
         @has_underline = has_underline
             
         clear()
-        @_pal_escape = {}
-        @_palette.items.each_with_index { |p,v|
-            _on_update_palette_entry(p, *v)
+        @pal_escape = {}
+        @palette.items.each_with_index { |p,v|
+            on_update_palette_entry(p, *v)
         }
     end
 
@@ -972,8 +979,8 @@ class Screen < DisplayCommon::BaseScreen
           "%d;rgb:%02x/%02x/%02x" % [index, red, green, blue]
         }]
 
-        seq = @_term_output_file.write("\x1b]4;"+modify.join(';')+"\x1b\\")
-        @_term_output_file.flush
+        seq = @term_output_file.write("\x1b]4;"+modify.join(';')+"\x1b\\")
+        @term_output_file.flush
     end
 
     # shortcut for creating an AttrSpec with this screen object's

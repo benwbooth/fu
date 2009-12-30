@@ -10,8 +10,8 @@ include StrUtil
 # Try to determine if using a supported double-byte encoding
 detected_encoding = Encoding.default_external.name || ''
 
-_target_encoding = nil
-_use_dec_special = true
+@@target_encoding = nil
+@@use_dec_special = true
 
 # Set the byte encoding to assume when processing strings and the
 # encoding to use when converting unicode strings.
@@ -20,25 +20,25 @@ def self.set_encoding( encoding )
 
     if [ 'utf-8', 'utf8', 'utf' ].include? encoding
         StrUtil.set_byte_encoding("utf8")
-        _use_dec_special = false
+        @@use_dec_special = false
     elsif [ 'euc-jp', # JISX 0208 only
             'euc-kr', 'euc-cn', 'euc-tw', # CNS 11643 plain 1 only
             'gb2312', 'gbk', 'big5', 'cn-gb', 'uhc',
             # these shouldn't happen, should they?
             'eucjp', 'euckr', 'euccn', 'euctw', 'cncb' ].include? encoding
         StrUtil.set_byte_encoding("wide")
-        _use_dec_special = true
+        @@use_dec_special = true
     else
         StrUtil.set_byte_encoding("narrow")
-        _use_dec_special = true
+        @@use_dec_special = true
     end
 
     # if encoding is valid for conversion from unicode, remember it
-    _target_encoding = 'ASCII-8BIT'
+    @@target_encoding = 'ASCII-8BIT'
     begin
         if encoding
             "".encode(encoding, 'UTF-8')
-            _target_encoding = encoding
+            @@target_encoding = encoding
         end
     rescue RuntimeError
     end
@@ -54,23 +54,23 @@ end
 
 # Return (encoded byte string, character set rle).
 def self.apply_target_encoding( s )
-    if _use_dec_special and s.class == "".class
+    if @@use_dec_special && s.class == "".class
         # first convert drawing characters
-        escape.DEC_SPECIAL_CHARS.
-          zip(escape.ALT_DEC_SPECIAL_CHARS).each {|a|
+        Escape::DEC_SPECIAL_CHARS.
+          zip(Escape::ALT_DEC_SPECIAL_CHARS).each {|a|
           c, alt = *a
-          s = s.gsub( c, escape.SO+alt+escape.SI )
+          s = s.gsub( c, Escape::SO+alt+Escape::SI )
         }
     end
     
     if s.class == "".class
-        s = s.gsub( escape.SI+escape.SO, "" ) # remove redundant shifts
-        s = s.encode( _target_encoding )
+        s = s.gsub( Escape::SI+Escape::SO, "" ) # remove redundant shifts
+        s = s.encode( @@target_encoding )
     end
 
-    sis = s.split( escape.SO )
+    sis = s.split( Escape::SO )
 
-    sis0 = sis[0].gsub( escape.SI, "" )
+    sis0 = sis[0].gsub( Escape::SI, "" )
     sout = []
     cout = []
     if sis0
@@ -83,18 +83,18 @@ def self.apply_target_encoding( s )
     end
     
     sis[1..-1].each { |sn|
-        sl = sn.split( escape.SI, 2 ) 
+        sl = sn.split( Escape::SI, 2 ) 
         if sl.length == 1
             sin = sl[0]
             sout << sin
-            rle_append_modify(cout, [escape.DEC_TAG, sin.length])
+            rle_append_modify(cout, [Escape::DEC_TAG, sin.length])
             next
         end
         sin, son = sl
-        son = son.gsub( escape.SI, "" )
+        son = son.gsub( Escape::SI, "" )
         if sin
             sout << sin
-            rle_append_modify(cout, [escape.DEC_TAG, sin.length])
+            rle_append_modify(cout, [Escape::DEC_TAG, sin.length])
         end
         if son
             sout << son
@@ -102,7 +102,7 @@ def self.apply_target_encoding( s )
         end
     }
     
-    return "".join(sout), cout
+    return sout.join(''), cout
 end
     
 # Try to set the encoding using the one detected by the locale module
@@ -111,7 +111,7 @@ set_encoding( detected_encoding )
 # Return true if python is able to convert non-ascii unicode strings
 # to the current encoding.
 def self.supports_unicode()
-    return _target_encoding && _target_encoding != 'ASCII-8BIT'
+    return @@target_encoding && @@target_encoding != 'ASCII-8BIT'
 end
 
 # Calculate the result of trimming text.
@@ -318,8 +318,8 @@ end
 
 # Return (text string, attribute list) for tagmarkup passed.
 def self.decompose_tagmarkup( tm )
-    tl, al = _tagmarkup_recurse( tm, nil )
-    text = "".join(tl)
+    tl, al = tagmarkup_recurse( tm, nil )
+    text = t1.join('')
     
     if al && al[-1][0].nil?
         al.delete_at(-1)
@@ -338,7 +338,7 @@ def self._tagmarkup_recurse( tm, _attr )
         rtl = [] 
         ral = []
         tm.each{ |element|
-            tl, al = _tagmarkup_recurse( element, _attr )
+            tl, al = tagmarkup_recurse( element, _attr )
             if ral
                 # merge attributes when possible
                 last_attr, last_run = *ral[-1]
@@ -361,7 +361,7 @@ def self._tagmarkup_recurse( tm, _attr )
         end
 
         _attr, element = *tm
-        return _tagmarkup_recurse( element, _attr )
+        return tagmarkup_recurse( element, _attr )
     end
     
     if ![str, unicode].include?(tm.class)

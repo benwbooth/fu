@@ -247,7 +247,7 @@ MOUSE_DRAG_FLAG = 32
 # Build the input trie from input_sequences list
 input_trie = KeyqueueTrie.new(input_sequences)
 
-_keyconv = {
+keyconv = {
   -1 => nil,
   8 => 'backspace',
   9 => 'tab',
@@ -288,8 +288,8 @@ def self.process_keyqueue(codes, more_available)
     key = code.chr
     return [key], codes[1..codes.length-1]
   end
-  if _keyconv.has_key? code
-    return [_keyconv[code]], codes[1..codes.length-1]
+  if keyconv.has_key? code
+    return [keyconv[code]], codes[1..codes.length-1]
   end
   if code > 0 && code < 27
     return ['ctrl '+('a'.ord+code-1).chr], codes[1..codes.length-1]
@@ -361,9 +361,9 @@ def self.process_keyqueue(codes, more_available)
     return [result], remaining_codes
   end
 
-  if codes[1..codes.length-1]
+  if codes[1..-1].length > 0
     # Meta keys -- ESC+Key form
-    run, remaining_codeds = *process_keyqueue(codes[1..codes.length-1],
+    run, remaining_codeds = process_keyqueue(codes[1..codes.length-1],
                                               more_available)
     if run[0] == 'esc' || run[0].match('meta ')
       return ['esc']+run,  remaining_codes
@@ -393,9 +393,9 @@ INSERT_ON = ESC+"[4h"
 INSERT_OFF = ESC+"[4l"
 
 def self.set_cursor_position(x, y)
-  raise unless x.class = 0.class
-  raise unless y.class = 0.class
-  return ESC+"[#{y+1};#{x+1}H]"
+  raise unless x.class == Fixnum
+  raise unless y.class == Fixnum
+  return ESC+"[#{y+1};#{x+1}H"
 end
 
 def self.move_cursor_right(x)
