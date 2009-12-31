@@ -9,6 +9,10 @@ class Canvas
   attr_reader :cols
   attr_reader :colors
 
+  def self._instance_exec(&block)
+    instance_exec(&block)
+  end
+
   class Op
     attr_accessor :children
     class Pop
@@ -30,7 +34,7 @@ class Canvas
     def initialize(&block)
       @children = []
       if block_given?
-        children = instance_exec(&block)
+        children = Canvas._instance_exec(&block)
         if children
           @children = children.class == Array ? children : [children]
         end
@@ -49,14 +53,14 @@ class Canvas
   class FgColor < Op
     class Pop < Op::Pop
       def self.pattern 
-        /\[\s*fg\s*\]/i
+        /\[\s*f(?:g)?\s*\]/i
       end
       def to_s
         '[fg]'
       end
     end
     def self.pattern 
-      /\[\s*fg\s+(\w+)\s*\]/i
+      /\[\s*f(?:g)?\s+([^\s\]]+)\s*\]/i
     end
     def initialize(color)
       super()
@@ -69,17 +73,21 @@ class Canvas
       @color.to_s
     end
   end
+  def self.fg(*args, &block)
+    FgColor.new(*args, &block)
+  end
+
   class BgColor < Op
     class Pop < Op::Pop
       def self.pattern 
-        /\[\s*bg\s*\]/i
+        /\[\s*b(?:g)?\s*\]/i
       end
       def to_s
         '[bg]'
       end
     end
     def self.pattern
-      /\[\s*bg\s+(\w+)\s*\]/i
+      /\[\s*b(?:g)?\s+([^\s\]]+)\s*\]/i
     end
     def initialize(color)
       super()
@@ -92,19 +100,23 @@ class Canvas
       @color.to_s
     end
   end
+  def self.bg(*args, &block)
+    BgColor.new(*args, &block)
+  end
+
   class Color < Op
     attr_accessor :fg
     attr_accessor :bg
     class Pop < Op::Pop
       def self.pattern 
-        /\[color\]/
+        /\[c(?:o(?:l(?:o(?:r)?)?)?)?\]/
       end
       def to_s
         '[color]'
       end
     end
     def self.pattern 
-      /\[\s*color\s+(\w+)(?:\s+(\w+))?\s*\]/i
+      /\[\s*c(?:o(?:l(?:o(?:r)?)?)?)?\s+([^\s\]]+)(?:\s+([^\s\]]+))?\s*\]/i
     end
     def initialize(fg=nil, bg=nil)
       super()
@@ -124,19 +136,23 @@ class Canvas
       end
     end
   end
+  def self.color(*args, &block)
+    Color.new(*args, &block)
+  end
+
   class Pos < Op
     attr_accessor :x
     attr_accessor :y
     class Pop < Op::Pop
       def self.pattern
-        /\[\s*pos\s*\]/i
+        /\[\s*p(?:o(?:s)?)?\s*\]/i
       end
       def to_s
         '[pos]'
       end
     end
     def self.pattern
-      /\[\s*pos\s+(\w+)(?:\s+(\w+))?\s*\]/i
+      /\[\s*p(?:o(?:s)?)?\s+([^\s\]]+)(?:\s+([^\s\]]+))?\s*\]/i
     end
     def initialize(x=nil,y=nil)
       super()
@@ -156,17 +172,21 @@ class Canvas
       end
     end
   end
+  def self.pos(*args, &block)
+    Pos.new(*args, &block)
+  end
+
   class Bold < Op
     class Pop < Op::Pop
       def self.pattern
-        /\*|\[\s*bold\s*\]/i
+        /\*|\[\s*b(?:o(?:l(?:d)?)?)?\s*\]/i
       end
       def to_s
         '*'
       end
     end
     def self.pattern
-      /\*|\[\s*bold\s*\]/i
+      /\*|\[\s*b(?:o(?:l(?:d)?)?)?\s*\]/i
     end
     def to_s
       '*'
@@ -175,17 +195,21 @@ class Canvas
       'bold'
     end
   end
+  def self.bold(*args, &block)
+    Bold.new(*args, &block)
+  end
+  
   class Underline < Op
     class Pop < Op::Pop
       def self.pattern
-        /_|\[\s*underline\s*\]/i
+        /_|\[\s*u(?:n(?:d(?:e(?:r(?:l(?:i(?:n(?:e)?)?)?)?)?)?)?)?\s*\]/i
       end
       def to_s
         '_'
       end
     end
     def self.pattern
-      /_|\[\s*underline\s*\]/i
+      /_|\[\s*u(?:n(?:d(?:e(?:r(?:l(?:i(?:n(?:e)?)?)?)?)?)?)?)?\s*\]/i
     end
     def to_s
       '_'
@@ -194,17 +218,21 @@ class Canvas
       'underline'
     end
   end
+  def self.underline(*args, &block)
+    Underline.new(*args, &block)
+  end
+
   class Standout < Op
     class Pop < Op::Pop
       def self.pattern
-        /\+|\[\s*standout\s*\]/i
+        /\+|\[\s*s(?:t(?:a(?:n(?:d(?:o(?:u(?:t)?)?)?)?)?)?)?\s*\]/i
       end
       def to_s
         '+'
       end
     end
     def self.pattern 
-      /\+|\[\s*standout\s*\]/i
+      /\+|\[\s*s(?:t(?:a(?:n(?:d(?:o(?:u(?:t)?)?)?)?)?)?)?\s*\]/i
     end
     def to_s
       '+'
@@ -213,6 +241,10 @@ class Canvas
       'standout'
     end
   end
+  def self.standout(*args, &block)
+    Standout.new(*args, &block)
+  end
+
   class Escape < Op
     def self.pattern
       /\\(\\|\[|\]|\*|\+|_)/i
@@ -241,7 +273,7 @@ class Canvas
     [@rows, @cols]
   end
 
-  def parse_text(text='', offset=[0], parent=Text.new)
+  def parse(text='', offset=[0], parent=Text.new)
     text.join!("\n") if 
       text.class == Array && text[0] && text[0].class == String
     offset = [offset] if offset.class != Array
@@ -252,7 +284,7 @@ class Canvas
 
       [ Escape, 
         parent.class::Pop,
-        Standout, Underline, Bold, Pos, FgColor, BgColor, Color, 
+        Pos, Standout, Underline, Bold, FgColor, BgColor, Color, 
         Text 
       ].each {|rule| 
         match, new_offset = rule.parse(text, offset[0])
@@ -268,7 +300,7 @@ class Canvas
             when parent.class::Pop
               return parent
             else
-              children << parse_text(text, offset, match)
+              children << parse(text, offset, match)
           end
           break
         end
@@ -280,10 +312,31 @@ class Canvas
     parent
   end
 
+  def escape(str)
+    str.gsub(/\\|\[|\]|\*|\+|_/) { |match| '\\'+match[0] }
+  end
+
+  def serialize(tree, str='')
+    tree = [tree] if tree.class != Array
+    tree.each do |node| 
+      case node
+        when String
+          str += escape(node)
+        when Text, Escape
+          str += serialize(node.children)
+        else
+          str += node.to_s + 
+            serialize(node.children) + 
+            node.class::Pop.new.to_s
+      end
+    end
+    str
+  end
+
   def flatten(tree)
     tree = [tree] if tree.class != Array
     ops = []
-    tree.each {|node| 
+    tree.each do |node| 
       case node
         when String
           ops << node 
@@ -292,7 +345,7 @@ class Canvas
         else
           ops += [node, *flatten(node.children), node.class::Pop.new]
       end
-    }
+    end
     ops
   end
 
@@ -308,9 +361,9 @@ class Canvas
 
     text.join!("\n") if 
       text.class == Array && text[0] && text[0].class == String
-    text = [parse_text(text)] if text.class == String
+    text = [parse(text)] if text.class == String
     if block_given?
-      more = instance_exec(&block)
+      more = Canvas._instance_exec(&block)
       more = [more] if more.class != Array
       text += more
     end
@@ -320,47 +373,53 @@ class Canvas
     text.each_with_index {|op,i| 
       case op
         when String 
-          op.chars { |c| 
-            c, cs = Util.apply_target_encoding(c)
-            if c == "\n"
-              # process newlines
-              @cursor = line_start
-              @cursor[1] += 1
-              line_start = @cursor*1
-            else
-              # expand the content grid if necessary
-              if @cursor[1] >= @rows
-                @content += Array.new(@cursor[1]+1-@rows) {
-                  Array.new(@cols) {[nil, nil, '']} 
-                }
-                @rows = @content.length
-                @cols = @content[0].length if @content[0]
+          str=''
+          op.chars do |c| 
+            str += c
+            width = StrUtil.calc_width(str, 0, str.length)
+            if  width > 0
+              str, cs = Util.apply_target_encoding(str)
+              if str == "\n"
+                # process newlines
+                @cursor = line_start
+                @cursor[1] += 1
+                line_start = @cursor*1
+              else
+                # expand the content grid if necessary
+                if @cursor[1] >= @rows
+                  @content += Array.new(@cursor[1]+1-@rows) {
+                    Array.new(@cols) {[nil, nil, '']} 
+                  }
+                  @rows = @content.length
+                  @cols = @content[0].length if @content[0]
+                end
+                if @cursor[0] >= @cols
+                  @content.each_index{ |i| 
+                    if @cursor[0] >= @content[i].length
+                      @content[i] += Array.new(@cursor[0]+1-@content[i].length) {
+                        [nil, nil, '']
+                      }
+                    end
+                  }
+                  @cols = @content[0].length if @content[0]
+                end
+
+                # draw on the screen
+                fg = [stacks[:fgcolor][-1],
+                  stacks[:bold][-1],
+                  stacks[:underline][-1],
+                  stacks[:standout][-1],
+                ].grep(lambda {|_| _}) {|_| _.inspect}.join(',')
+
+                bg = stacks[:bgcolor][-1] ? stacks[:bgcolor][-1].inspect : ''
+
+                @content[@cursor[1]][@cursor[0]] = 
+                  [DisplayCommon::AttrSpec.new(fg, bg, @colors), cs[0][0], str]
+                @cursor[0] += width
               end
-              if @cursor[0] >= @cols
-                @content.each_index{ |i| 
-                  if @cursor[0] >= @content[i].length
-                    @content[i] += Array.new(@cursor[0]+1-@content[i].length) {
-                      [nil, nil, '']
-                    }
-                  end
-                }
-                @cols = @content[0].length if @content[0]
-              end
-
-              # draw on the screen
-              fg = [stacks[:fgcolor][-1],
-                stacks[:bold][-1],
-                stacks[:underline][-1],
-                stacks[:standout][-1],
-              ].grep(lambda {|_| _}) {|_| _.inspect}.join(',')
-
-              bg = stacks[:bgcolor][-1] ? stacks[:bgcolor][-1].inspect : ''
-
-              @content[@cursor[1]][@cursor[0]] = 
-                [DisplayCommon::AttrSpec.new(fg, bg, @colors), cs[0][0], c]
-              @cursor[0] += 1
+              str=''
             end
-          }
+          end
         when FgColor
           stacks[:fgcolor] << op
         when FgColor::Pop
@@ -410,11 +469,14 @@ end
 
 if __FILE__ == $0
   c=Canvas.new
-  c.draw("[fg green]_*abc*_d[fg]ef  \n\n[color white darkblue]hello[color] there")
-  c.draw {[
-     Pos.new(0,'+1'),
-     FgColor.new('orange') {[Bold.new {'abc'}, 'd']},"ef  \n\n",Color.new(nil,'yellow') {['hello']}, ' there'
+  #c.draw("[fg green]_*abc*_d[fg]ef  \n\n[color white darkblue]hello[color] there")
+  a=Canvas::Text.new {[
+     pos(0,'+1') {[
+      fg('orange') {[bold {'abc'}, 'd']},"ef  \n\n",color('black','yellow') {'hello'}, " there\n\n", standout {"still here"}
+     ]}
   ]}
+  s = c.serialize(a)
+  c.draw(s)
 
   out = StringIO.new
   rd = RawDisplay::Screen.new(out)
@@ -422,8 +484,5 @@ if __FILE__ == $0
   rd.draw_screen(c.rowcol, c)
   puts out.string
   rd.stop
-  p c.rowcol
-  p out.string
-  p c.content
 end
 

@@ -185,7 +185,7 @@ class Screen < RealTerminal
     @started = false
     
     if @old_signal_keys
-      tty_signal_keys(*@old_signal_keys)
+      tty_signal_keys($stdin,*@old_signal_keys)
     end
   end
   

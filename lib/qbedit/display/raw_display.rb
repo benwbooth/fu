@@ -54,7 +54,7 @@ class Screen < DisplayCommon::BaseScreen
         #    on_update_palette_entry)
         @colors = 256 # FIXME: detect this
         @has_underline = true # FIXME: detect this
-        register_palette_entry( nil, 'default','default')
+        register_palette_entry(nil, 'default','default')
         @keyqueue = []
         @prev_input_resize = 0
         set_input_timeouts()
@@ -85,8 +85,11 @@ class Screen < DisplayCommon::BaseScreen
         @run_input_iter = Fiber.new do
             # clean out the pipe used to signal external event loops
             # that a resize has occured
-            def empty_resize_pipe
-                while !@resize_pipe_rd.read(1).nil?
+            empty_resize_pipe = lambda do
+                begin
+                  while @resize_pipe_rd.read_nonblock(1024)
+                  end
+                rescue
                 end
             end
 
@@ -103,7 +106,7 @@ class Screen < DisplayCommon::BaseScreen
                 rescue Escape::MoreInputRequired
                     k = original_codes.length - codes.length
                     Fiber.yield(@complete_wait, processed, original_codes[0..k-1])
-                    empty_resize_pipe()
+                    empty_resize_pipe.call
                     original_codes = codes
                     processed = []
 
@@ -118,9 +121,8 @@ class Screen < DisplayCommon::BaseScreen
                     processed.append('window resize')
                     @resized = false
                 end
-
                 Fiber.yield(@max_wait, processed, original_codes)
-                empty_resize_pipe()
+                empty_resize_pipe.call
             end
         end
 
@@ -270,11 +272,11 @@ class Screen < DisplayCommon::BaseScreen
         signal_init()
         setcbreak
         @alternate_buffer = alternate_buffer
-        @input_iter = @run_input_iter.resume
+        @input_iter = @run_input_iter
         @next_timeout = @max_wait
         
         if !@signal_keys_set
-            @old_signal_keys = tty_signal_keys()
+            @old_signal_keys = tty_signal_keys(@term_input_file)
         end
 
         @started = true
@@ -304,10 +306,10 @@ class Screen < DisplayCommon::BaseScreen
             Escape::MOUSE_TRACKING_OFF+
             Escape::SHOW_CURSOR+
             move_cursor + "\n" + Escape::SHOW_CURSOR )
-        @input_iter = @fake_input_iter.resume
+        @input_iter = @fake_input_iter
 
         if @old_signal_keys
-            tty_signal_keys(*@old_signal_keys)
+            tty_signal_keys(@term_input_file, *@old_signal_keys)
         end
         
         @started = false
@@ -370,13 +372,13 @@ class Screen < DisplayCommon::BaseScreen
         raise if !@started
         
         wait_for_input_ready(@next_timeout)
-        @next_timeout, keys, raw = @input_iter.next
+        @next_timeout, keys, raw = @input_iter.resume
         
         # Avoid pegging CPU at 100% when slowly resizing
         if keys == ['window resize'] && @prev_input_resize
             while true
                 wait_for_input_ready(@resize_wait)
-                @next_timeout, keys, raw2 = @input_iter.next
+                @next_timeout, keys, raw2 = @input_iter.resume
                 raw += raw2
                 #if !keys
                 #    keys, raw2 = @get_input(@resize_wait)
@@ -430,7 +432,8 @@ class Screen < DisplayCommon::BaseScreen
     # (a floating point number) if there is no input waiting.
     def get_input_nonblocking
         raise if !@started
-        return @input_iter.next()
+        r = @input_iter.resume
+        return r
     end
 
     def get_keyboard_codes
@@ -461,7 +464,7 @@ class Screen < DisplayCommon::BaseScreen
         return codes
     end
 
-    def wait_for_input_ready(timeout)
+    def wait_for_input_ready(timeout=nil)
         ready = nil
         fd_list = [@term_input_file]
         if !@gpm_mev.nil?
@@ -472,20 +475,18 @@ class Screen < DisplayCommon::BaseScreen
                 if timeout.nil?
                     ready,w,err = IO.select(fd_list, [], fd_list)
                 else
-                    ready,w,err = IO.select(fd_list,[], fd_list, timeout)
+                    ready,w,err = IO.select(fd_list, [], fd_list, timeout)
                 end
                 ready ||= []
                 w ||= []
                 err ||= []
                 break
-            rescue IOError, e
-                if e.args[0] != 4
-                    raise
-                end
+            rescue IOError => e
                 if @resized
                     ready = []
                     break
                 end
+                raise
             end
         end
         return ready    
@@ -499,7 +500,12 @@ class Screen < DisplayCommon::BaseScreen
             end
         end
         if ready.include? @term_input_file
-            return @term_input_file.read(1).ord
+            c = nil
+            begin
+              c = @term_input_file.read_nonblock(1)
+            rescue
+            end
+            return c.ord if c
         end
         return -1
     end
@@ -588,12 +594,10 @@ class Screen < DisplayCommon::BaseScreen
     # Return the terminal dimensions (num columns, num rows).
     def get_cols_rows
       begin
-        tty = File.open('/dev/tty', File::RDWR|File::NOCTTY)
-        tty.sync = true
-        buf = ' '*4
+        tty = @term_input_file
+        buf = '    '
         tty.ioctl(Termios::TIOCGWINSZ, buf)
-        size = [buf[0..1].unpack('v'), buf[2..3].unpack('v')]
-        tty.close
+        size = buf.unpack('vv')
       rescue IOError
           size = [0,0]
       end
@@ -603,7 +607,7 @@ class Screen < DisplayCommon::BaseScreen
       if size[1] == 0
           size[1] = ENV['COLUMNS'].to_i
       end
-      return *size
+      return size
     end
     
     # Initialize the G1 character set to graphics mode if required.
@@ -627,7 +631,7 @@ class Screen < DisplayCommon::BaseScreen
         maxrow, maxcol = *maxrowcol
         # Paint screen with rendered canvas.
         raise unless @started
-        raise unless maxrow == r.rows
+        #raise unless maxrow == r.rows
 
         setup_G1()
         
@@ -638,13 +642,13 @@ class Screen < DisplayCommon::BaseScreen
         
         o = [Escape::HIDE_CURSOR, attrspec_to_escape(AttrSpec('',''))]
         
-        def partial_display
+        partial_display = lambda do
             # returns true if the screen is in partial display mode
             # ie. only some rows belong to the display
             return !@rows_used.nil?
         end
 
-        if !partial_display()
+        if !partial_display.call
             o << Escape::CURSOR_HOME
         end
 
@@ -657,35 +661,35 @@ class Screen < DisplayCommon::BaseScreen
         cy = @cy
         y = -1
 
-        def set_cursor_home
-            if !partial_display()
+        set_cursor_home = lambda do
+            if !partial_display.call
                 return Escape.set_cursor_position(0, 0)
             end
             return (Escape::CURSOR_HOME_COL + Escape.move_cursor_up(cy))
         end
         
-        def set_cursor_row(y)
-            if !partial_display()
-                return Escape.set_cursor_position(0, y)
+        set_cursor_row = lambda do |_y|
+            if !partial_display.call
+                return Escape.set_cursor_position(0, _y)
             end
             return Escape.move_cursor_down(y - cy)
         end
 
-        def set_cursor_position(x, y)
-            if !partial_display()
-                return Escape.set_cursor_position(x, y)
+        set_cursor_position = lambda do |x, _y|
+            if !partial_display.call
+                return Escape.set_cursor_position(x, _y)
             end
-            if cy > y
+            if cy > _y
                 return ("\b" + Escape::CURSOR_HOME_COL +
-                    Escape.move_cursor_up(cy - y) +
+                    Escape.move_cursor_up(cy - _y) +
                     Escape.move_cursor_right(x))
             end
             return ("\b" + Escape::CURSOR_HOME_COL +
-                Escape.move_cursor_down(y - cy) +
+                Escape.move_cursor_down(_y - cy) +
                 Escape.move_cursor_right(x))
         end
         
-        def is_blank_row(row)
+        is_blank_row = lambda do |row|
             if row.length > 1
                 return false
             end
@@ -695,7 +699,7 @@ class Screen < DisplayCommon::BaseScreen
             return true
         end
 
-        def attr_to_escape(a)
+        attr_to_escape = lambda do |a|
             if @pal_escape.include? a
                 return @pal_escape[a]
             elsif a.class == DisplayCommon::AttrSpec
@@ -707,7 +711,7 @@ class Screen < DisplayCommon::BaseScreen
         end
 
         ins = nil
-        o << set_cursor_home()
+        o << set_cursor_home.call
         cy = 0
         r.content().each {|row|
             y += 1
@@ -722,15 +726,15 @@ class Screen < DisplayCommon::BaseScreen
             
             # leave blank lines off display when we are using
             # the default screen buffer (allows partial screen)
-            if partial_display() && y > @rows_used
-                if is_blank_row(row)
+            if partial_display.call && y > @rows_used
+                if is_blank_row.call(row)
                     next
                 end
                 @rows_used = y
             end
             
-            if y || partial_display()
-                o << set_cursor_position(0, y)
+            if y || partial_display.call
+                o << set_cursor_position.call(0, y)
             end
             # after updating the line we will be just over the
             # edge, but terminals still treat this as being
@@ -752,7 +756,7 @@ class Screen < DisplayCommon::BaseScreen
 
                 run.tr!(*@trans_table)
                 if first || lasta != a
-                    o << attr_to_escape(a)
+                    o << attr_to_escape.call(a)
                     lasta = a
                 end
                 if first || (lastcs != cs)
@@ -769,7 +773,7 @@ class Screen < DisplayCommon::BaseScreen
             }
             if ins
                 inserta, insertcs, inserttext = *ins
-                ias = attr_to_escape(inserta)
+                ias = attr_to_escape.call(inserta)
                 raise insertcs.to_s unless [nil, "0"].include? insertcs
                 if insertcs.nil?
                     icss = Escape::SI
@@ -784,7 +788,7 @@ class Screen < DisplayCommon::BaseScreen
         }
         if !r.cursor.nil?
             x,y = r.cursor
-            o += [set_cursor_position(x, y), 
+            o += [set_cursor_position.call(x, y), 
                 Escape::SHOW_CURSOR  ]
             @cy = y
         end

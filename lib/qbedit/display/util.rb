@@ -10,8 +10,8 @@ include StrUtil
 # Try to determine if using a supported double-byte encoding
 detected_encoding = Encoding.default_external.name || ''
 
-@@target_encoding = nil
-@@use_dec_special = true
+@target_encoding = nil
+@use_dec_special = true
 
 # Set the byte encoding to assume when processing strings and the
 # encoding to use when converting unicode strings.
@@ -20,25 +20,25 @@ def self.set_encoding( encoding )
 
     if [ 'utf-8', 'utf8', 'utf' ].include? encoding
         StrUtil.set_byte_encoding("utf8")
-        @@use_dec_special = false
+        @use_dec_special = false
     elsif [ 'euc-jp', # JISX 0208 only
             'euc-kr', 'euc-cn', 'euc-tw', # CNS 11643 plain 1 only
             'gb2312', 'gbk', 'big5', 'cn-gb', 'uhc',
             # these shouldn't happen, should they?
             'eucjp', 'euckr', 'euccn', 'euctw', 'cncb' ].include? encoding
         StrUtil.set_byte_encoding("wide")
-        @@use_dec_special = true
+        @use_dec_special = true
     else
         StrUtil.set_byte_encoding("narrow")
-        @@use_dec_special = true
+        @use_dec_special = true
     end
 
     # if encoding is valid for conversion from unicode, remember it
-    @@target_encoding = 'ASCII-8BIT'
+    @target_encoding = 'ASCII-8BIT'
     begin
         if encoding
             "".encode(encoding, 'UTF-8')
-            @@target_encoding = encoding
+            @target_encoding = encoding
         end
     rescue RuntimeError
     end
@@ -54,7 +54,7 @@ end
 
 # Return (encoded byte string, character set rle).
 def self.apply_target_encoding( s )
-    if @@use_dec_special && s.class == "".class
+    if @use_dec_special && s.class == "".class
         # first convert drawing characters
         Escape::DEC_SPECIAL_CHARS.
           zip(Escape::ALT_DEC_SPECIAL_CHARS).each {|a|
@@ -65,7 +65,7 @@ def self.apply_target_encoding( s )
     
     if s.class == "".class
         s = s.gsub( Escape::SI+Escape::SO, "" ) # remove redundant shifts
-        s = s.encode( @@target_encoding )
+        s = s.encode( @target_encoding )
     end
 
     sis = s.split( Escape::SO )
@@ -111,7 +111,7 @@ set_encoding( detected_encoding )
 # Return true if python is able to convert non-ascii unicode strings
 # to the current encoding.
 def self.supports_unicode()
-    return @@target_encoding && @@target_encoding != 'ASCII-8BIT'
+    return @target_encoding && @target_encoding != 'ASCII-8BIT'
 end
 
 # Calculate the result of trimming text.

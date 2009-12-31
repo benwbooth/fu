@@ -315,20 +315,20 @@ def self.parse_color_256(desc)
         end
 
         # Only remaining possibility is gray value
-        if desc[0..2] == 'g##'
-            # decimal value 0..100
-            gray = desc[3..-1].to_i
-            if gray < 0 || gray > 100
-                return nil
-            end
-            gray = GRAY_256_LOOKUP_101[gray]
-        elsif desc[0..1] == 'g#'
+        if desc[0..1] == 'g#'
             # hex value 00..ff
             gray = desc[2..-1].hex
             if gray < 0 || gray > 255
                 return nil
             end
             gray = GRAY_256_LOOKUP[gray]
+        elsif desc.match(/^g\d+$/)
+            # decimal value 0..100
+            gray = desc[1..-1].to_i
+            if gray < 0 || gray > 100
+                return nil
+            end
+            gray = GRAY_256_LOOKUP_101[gray]
         else
             # it must be a named color. Check and see if there's a 
             # color by this name in the dictionary
@@ -699,8 +699,8 @@ class RealTerminal
   # If this function is called after start() has been called
   # then the original settings will be restored when stop()
   # is called.
-  def tty_signal_keys(intr=nil, quit=nil, start=nil, stop=nil, susp=nil)
-    tattr = Termios.tcgetattr(STDIN)
+  def tty_signal_keys(term_input_file=$stdin, intr=nil, quit=nil, start=nil, stop=nil, susp=nil)
+    tattr = Termios.tcgetattr(term_input_file)
     sattr = tattr.cc
     skeys = [sattr[Termios::VINTR], sattr[Termios::VQUIT],
         sattr[Termios::VSTART], sattr[Termios::VSTOP],
@@ -739,7 +739,7 @@ class RealTerminal
     end
     
     if (!intr.nil? || !quit.nil? || !start.nil? || !stop.nil? || !susp.nil?)
-        Termios.tcsetattr(STDIN, Termios::TCSADRAIN, tattr)
+        Termios.tcsetattr(term_input_file, Termios::TCSADRAIN, tattr)
         @signal_keys_set = true
     end
     

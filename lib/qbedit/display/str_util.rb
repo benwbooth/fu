@@ -3,7 +3,7 @@ $VERBOSE=true
 module StrUtil
 
 SAFE_ASCII_RE = /^[ -~]*$/
-@@_byte_encoding = nil
+@_byte_encoding = nil
 
 # GENERATED DATA
 # generated from 
@@ -150,11 +150,11 @@ end
 
 def self.set_byte_encoding(enc)
   raise unless ['utf8', 'narrow', 'wide'].include? enc
-  @@_byte_encoding = enc
+  @_byte_encoding = enc
 end
 
 def self.get_byte_encoding()
-  return @@_byte_encoding
+  return @_byte_encoding
 end
 
 # Calculate the closest position to the screen column pref_col in text
@@ -164,7 +164,7 @@ end
 # Returns (position, actual_col).
 def self.calc_text_pos( text, start_offs, end_offs, pref_col )
   raise "#{start_offs}, #{end_offs}" unless start_offs <= end_offs
-  utfs = text.class == "".class && @@_byte_encoding == "utf8"
+  utfs = text.class == "".class && @_byte_encoding == "utf8"
   if text.class == "".class || utfs
     i = start_offs
     sc = 0
@@ -191,7 +191,7 @@ def self.calc_text_pos( text, start_offs, end_offs, pref_col )
   if i >= end_offs
     return end_offs, end_offs-start_offs
   end
-  if @@_byte_encoding == "wide"
+  if @_byte_encoding == "wide"
     if within_double_byte( text, start_offs, i ) == 2
       i -= 1
     end
@@ -202,7 +202,7 @@ end
 # Return the screen column width of text between start_offs and end_offs.
 def self.calc_width( text, start_offs, end_offs )
   raise "#{start_offs.to_s}, #{end_offs.to_s}" unless start_offs <= end_offs
-  utfs = text.class == "".class && @@_byte_encoding == "utf8"
+  utfs = text.class == "".class && @_byte_encoding == "utf8"
   if (text.class == "".class || utfs) && !SAFE_ASCII_RE.match(text)
     i = start_offs
     sc = 0
@@ -231,11 +231,11 @@ def self.s_wide_char( text, offs )
     return get_width(o) == 2
   end
   raise unless text.class == "".class
-  if @@_byte_encoding == "utf8"
+  if @_byte_encoding == "utf8"
     o, n = decode_one(text, offs)
     return get_width(o) == 2
   end
-  if @@_byte_encoding == "wide"
+  if @_byte_encoding == "wide"
     return within_double_byte(text, offs, offs) == 1
   end
   return false
@@ -248,14 +248,14 @@ def self.move_prev_char( text, start_offs, end_offs )
     return end_offs-1
   end
   raise unless text.class == "".class
-  if @@_byte_encoding == "utf8"
+  if @_byte_encoding == "utf8"
     o = end_offs-1
     while text[o].ord&0xc0 == 0x80
       o -= 1
     end
     return o
   end
-  if @@_byte_encoding == "wide" && within_double_byte( text,
+  if @_byte_encoding == "wide" && within_double_byte( text,
     start_offs, end_offs-1) == 2
     return end_offs-2
   end
@@ -269,14 +269,14 @@ def self.move_next_char( text, start_offs, end_offs )
     return start_offs+1
   end
   raise unless text.class == "".class
-  if @@_byte_encoding == "utf8"
+  if @_byte_encoding == "utf8"
     o = start_offs+1
     while o<end_offs && text[o].ord&0xc0 == 0x80
       o += 1
     end
     return o
   end
-  if @@_byte_encoding == "wide" && within_double_byte(text, 
+  if @_byte_encoding == "wide" && within_double_byte(text, 
     start_offs, start_offs) == 1
     return start_offs +2
   end

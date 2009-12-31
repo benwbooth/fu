@@ -1,6 +1,8 @@
 # encoding: utf-8
 $VERBOSE=true
 
+require 'qbedit/display/util'
+
 module Escape
 
 SO = "\x0e"
@@ -29,7 +31,7 @@ def self.escape_modifier(digit)
   return 'shift '*(mode&1)+'meta '*((mode&2)/2)+'ctrl '*((mode&4)/4)
 end
 
-input_sequences = [
+@input_sequences = [
   ['[A','up'],['[B','down'],['[C','right'],['[D','left'],
   ['[E','5'],['[F','end'],['[G','5'],['[H','home'],
 
@@ -245,9 +247,9 @@ MOUSE_RELEASE_FLAG = 2048
 MOUSE_DRAG_FLAG = 32
 
 # Build the input trie from input_sequences list
-input_trie = KeyqueueTrie.new(input_sequences)
+@input_trie = KeyqueueTrie.new(@input_sequences)
 
-keyconv = {
+KEYCONV = {
   -1 => nil,
   8 => 'backspace',
   9 => 'tab',
@@ -288,8 +290,8 @@ def self.process_keyqueue(codes, more_available)
     key = code.chr
     return [key], codes[1..codes.length-1]
   end
-  if keyconv.has_key? code
-    return [keyconv[code]], codes[1..codes.length-1]
+  if KEYCONV.has_key? code
+    return [KEYCONV[code]], codes[1..codes.length-1]
   end
   if code > 0 && code < 27
     return ['ctrl '+('a'.ord+code-1).chr], codes[1..codes.length-1]
@@ -298,9 +300,9 @@ def self.process_keyqueue(codes, more_available)
     return ['ctrl '+('A'.ord+code-1).chr], codes[1..codes.length-1]
   end
 
-  em = util.get_encoding_mode
+  em = Util.get_encoding_mode
 
-  if (em == 'wide' && code < 256 && util.within_double_byte(code.chr, 0, 0))
+  if (em == 'wide' && code < 256 && Util.within_double_byte(code.chr, 0, 0))
     if !codes[1..codes.length-1]
       if more_available
         raise MoreInputRequired
@@ -308,7 +310,7 @@ def self.process_keyqueue(codes, more_available)
     end
     if codes[1..codes.length-1] && codes[1] < 256
       db = code.chr+codes[1].chr
-      if util.within_double_byte(db, 0, 1)
+      if Util.within_double_byte(db, 0, 1)
         return [db], codes[2..codes.length-1]
       end
     end
@@ -354,7 +356,7 @@ def self.process_keyqueue(codes, more_available)
     return ["<#{code}>"], codes[1..codes.length-1]
   end
 
-  result = input_trie.get(codes[1..codes.length-1], more_available)
+  result = @input_trie.get(codes[1..codes.length-1], more_available)
 
   if !result.nil?
     result, remaining_codes = *result
