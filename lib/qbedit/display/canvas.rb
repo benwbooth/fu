@@ -266,6 +266,7 @@ class Canvas
     @cols = 0
     @colors = colors
     @content = content
+    @last_content = content
     @cursor = cursor
   end
 
@@ -347,6 +348,22 @@ class Canvas
       end
     end
     ops
+  end
+
+  def diff_content
+    diff = []
+    @content.each_with_index do |row,i|
+      diff << []
+      row.each_with_index do |cell,j|
+        if !@last_content[i] || 
+           !@last_content[i][j] || 
+           @last_content[i][j] != cell
+          diff[-1] << cell 
+        end
+      end
+    end
+    @last_content = @content
+    diff
   end
 
   def draw(text='', &block)
@@ -475,8 +492,9 @@ if __FILE__ == $0
       fg('orange') {[bold {'abc'}, 'd']},"ef  \n\n",color('black','yellow') {'hello'}, " there\n\n", standout {"still here"}
      ]}
   ]}
-  s = c.serialize(a)
-  c.draw(s)
+  # s = c.serialize(a)
+  # c.draw(s)
+  c.draw('*a*')
 
   out = StringIO.new
   rd = RawDisplay::Screen.new(out)
@@ -484,5 +502,6 @@ if __FILE__ == $0
   rd.draw_screen(c.rowcol, c)
   puts out.string
   rd.stop
+  p out.string
 end
 

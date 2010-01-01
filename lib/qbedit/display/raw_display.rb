@@ -456,9 +456,7 @@ class Screen < DisplayCommon::BaseScreen
                     codes += encode_gpm_event()
                 end
             rescue IOError, e
-                if e.args[0] != 11
-                    raise
-                end
+                raise
             end
         end
         return codes
@@ -631,7 +629,6 @@ class Screen < DisplayCommon::BaseScreen
         maxrow, maxcol = *maxrowcol
         # Paint screen with rendered canvas.
         raise unless @started
-        #raise unless maxrow == r.rows
 
         setup_G1()
         
@@ -715,12 +712,14 @@ class Screen < DisplayCommon::BaseScreen
         cy = 0
         r.content().each {|row|
             y += 1
-            # if osb && osb[y] == row
-            #     # this row of the screen buffer matches what is
-            #     # currently displayed, so we can skip this line
-            #     sb << osb[y]
-            #     next
-            # end
+            break if y >= maxrow
+
+            if osb && osb[y] == row
+                # this row of the screen buffer matches what is
+                # currently displayed, so we can skip this line
+                sb << osb[y]
+                next
+            end
 
             sb << row
             
@@ -747,11 +746,16 @@ class Screen < DisplayCommon::BaseScreen
 
             first = true
             lasta = lastcs = nil
+            move_right = 0
             row.each{ |_|
                 a,cs,run = _
                 if run.length == 0
-                  o << Escape.move_cursor_right(1)
+                  move_right += 1
                   next
+                end
+                if move_right > 0
+                  o << Escape.move_cursor_right(move_right)
+                  move_right = 0
                 end
 
                 run.tr!(*@trans_table)
@@ -809,10 +813,7 @@ class Screen < DisplayCommon::BaseScreen
             }
             @term_output_file.flush
         rescue IOError, e
-            # ignore interrupted syscall
-            if e.args[0] != 4
-                raise
-            end
+            raise
         end
 
         @screen_buf = sb
@@ -831,36 +832,43 @@ class Screen < DisplayCommon::BaseScreen
     def last_row(row)
         new_row = row[0..-2]
         z_attr, z_cs, last_text = *row[-1]
-        last_cols = StrUtil::calc_width(last_text, 0, last_text.length)
-        last_offs, z_col = StrUtil::calc_text_pos(last_text, 0, 
+        last_cols = StrUtil.calc_width(last_text, 0, last_text.length)
+        last_offs, z_col = StrUtil.calc_text_pos(last_text, 0, 
             last_text.length, last_cols-1)
         if last_offs == 0
             z_text = last_text
             new_row.delete_at(-1)
-            # we need another segment
-            y_attr, y_cs, nlast_text = *row[-2]
-            nlast_cols = StrUtil::calc_width(nlast_text, 0, nlast_text.length)
-            z_col += nlast_cols
-            nlast_offs, y_col = StrUtil.calc_text_pos(nlast_text, 0,
-                nlast_text.length, nlast_cols-1)
-            y_text = nlast_text[nlast_offs..-1]
-            if nlast_offs != 0
-                new_row << [y_attr, y_cs, nlast_text[0..nlast_offs-1]]
+            if !row[-2].nil?
+              # we need another segment
+              y_attr, y_cs, nlast_text = *row[-2]
+              nlast_cols = StrUtil.calc_width(nlast_text, 0, nlast_text.length)
+              z_col += nlast_cols
+              nlast_offs, y_col = StrUtil.calc_text_pos(nlast_text, 0,
+                  nlast_text.length, nlast_cols-1)
+              y_text = nlast_text[nlast_offs..-1]
+              if nlast_offs != 0
+                  new_row << [y_attr, y_cs, nlast_text[0..nlast_offs-1]]
+              end
+              y = [y_attr, y_cs, y_text]
+            else
+              y_col=z_col
+              y = nil
             end
         else
             z_text = last_text[last_offs..-1]
             y_attr, y_cs = z_attr, z_cs
-            nlast_cols = StrUtil::calc_width(last_text, 0, last_offs)
-            nlast_offs, y_col = StrUtil::calc_text_pos(last_text, 0,
+            nlast_cols = StrUtil.calc_width(last_text, 0, last_offs)
+            nlast_offs, y_col = StrUtil.calc_text_pos(last_text, 0,
                 last_offs, nlast_cols-1)
             y_text = last_text[nlast_offs..last_offs-1]
             if nlast_offs != 0
                 new_row << [y_attr, y_cs, last_text[0..nlast_offs-1]]
             end
+            y = [y_attr, y_cs, y_text]
         end
         
         new_row << [z_attr, z_cs, z_text]
-        return new_row, z_col-y_col, [y_attr, y_cs, y_text]
+        return new_row, z_col-y_col, y
     end
     
     # Force the screen to be completely repainted on the next

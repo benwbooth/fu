@@ -9,11 +9,11 @@ class WindowSystem < Widget
   end
 
   def mouse_event(size, event, button, x, y, focus)
-    @c.draw("mouse event!\n")
+    @c.draw {'mouse event: '+[size,event,button,x,y,focus].inspect+"\n"}
   end
 
   def keypress(size, key)
-    @c.draw("keyboard event!\n")
+    @c.draw {'keyboard event: '+[size,key].inspect+"\n"}
   end
 
   def render(size, focus=false)

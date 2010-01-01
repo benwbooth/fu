@@ -495,6 +495,14 @@ class AttrSpec
         end
     end
 
+    def ==(o)
+      foreground_color == o.foreground_color &&
+        background == o.background &&
+        bold == o.bold &&
+        underline == o.underline &&
+        standout == o.standout
+    end
+
     def foreground_basic
       @value & FG_BASIC_COLOR != 0
     end
@@ -538,7 +546,7 @@ class AttrSpec
         return 1
     end
 
-    # Return an executable python representation of the AttrSpec
+    # Return an executable ruby representation of the AttrSpec
     # object.
     def to_s
         args = "%s, %s" % [@foreground.to_s, @background.to_s]
