@@ -21,12 +21,12 @@ GRAY_START_88 = CUBE_SIZE_88 ** 3 + CUBE_START
 CUBE_WHITE_88 = GRAY_START_88 - 1
 CUBE_BLACK = CUBE_START
 
-# values copied from xterm 256colres.h:
+# values copied from xterm_256colres.h:
 CUBE_STEPS_256 = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff]
 GRAY_STEPS_256 = [0x08, 0x12, 0x1c, 0x26, 0x30, 0x3a, 0x44, 0x4e, 0x58, 0x62,
     0x6c, 0x76, 0x80, 0x84, 0x94, 0x9e, 0xa8, 0xb2, 0xbc, 0xc6, 0xd0,
     0xda, 0xe4, 0xee]
-# values copied from xterm 88colres.h:
+# values copied from xterm_88colres.h:
 CUBE_STEPS_88 = [0x00, 0x8b, 0xcd, 0xff]
 GRAY_STEPS_88 = [0x2e, 0x5c, 0x73, 0x8b, 0xa2, 0xb9, 0xd0, 0xe7]
 # values copied from X11/rgb.txt and XTerm-col.ad:
@@ -282,11 +282,11 @@ end
 # 231
 # >>> parse_color_256('g#80')
 # 244
-def self.parse_color_256(desc)
+def self.parse_color_256(desc, colors=256)
     return nil if desc.nil?
     begin
         if desc.class == Array && desc.length >= 3
-          desc = '#'+(desc[0..2].map {|_| '%x' % ((_.to_f/255)*15)}.join(''))
+          desc = '#'+(desc[0..2].map {|_| '%x' % ((_.to_f/255)*15).to_i}.join(''))
           return self.parse_color_256(desc)
         end
 
@@ -299,7 +299,7 @@ def self.parse_color_256(desc)
             return num
         end
 
-        if desc[0] == '#' and desc.length == 4
+        if desc[0] == '#' && desc.length == 4
             # color-cube coordinates
             rgb = desc[1..-1].hex
             if rgb < 0
@@ -366,11 +366,12 @@ end
 # >>> parse_color_88('g#80')
 # 83
 def self.parse_color_88(desc)
-    if desc.length > 4
-        # keep the length within reason before parsing
-        return nil
-    end
+    return nil if desc.nil?
     begin
+        if desc.class == Array && desc.length >= 3
+          desc = '#'+(desc[0..2].map {|_| '%x' % ((_.to_f/255)*15).to_i}.join(''))
+          return self.parse_color_88(desc)
+        end
         if desc[0] == 'h'
             # high-color number
             num = desc[1..-1].to_i
@@ -380,7 +381,7 @@ def self.parse_color_88(desc)
             return num
         end
 
-        if desc[0] == '#' and desc.length == 4
+        if desc[0] == '#' && desc.length == 4
             # color-cube coordinates
             rgb = desc[1..-1].hex
             if rgb < 0
@@ -403,7 +404,7 @@ def self.parse_color_88(desc)
                 return nil
             end
             gray = GRAY_88_LOOKUP[gray]
-        elsif desc == 'g'
+        elsif desc.match(/^g\d+$/)
             # decimal value 0..100
             gray = desc[1..-1].to_i
             if gray < 0 || gray > 100
@@ -411,7 +412,8 @@ def self.parse_color_88(desc)
             end
             gray = GRAY_88_LOOKUP_101[gray]
         else
-            return nil
+            return self.parse_color_88(
+              Colors::COLORS[desc.downcase.gsub(/[ _]/,'')])
         end
         if gray == 0
             return CUBE_BLACK
@@ -549,10 +551,10 @@ class AttrSpec
     # Return an executable ruby representation of the AttrSpec
     # object.
     def to_s
-        args = "%s, %s" % [@foreground.to_s, @background.to_s]
+        args = "%s, %s" % [foreground, background]
         if colors == 88
             # 88-color mode is the only one that is handled differently
-            args = args + ", colors=88"
+            args += ', colors=88'
         end
         return "%s(%s)" % [self.class.to_s, args]
     end
@@ -566,9 +568,9 @@ class AttrSpec
             return BASIC_COLORS[foreground_number]
         end
         if colors == 88
-            return color_desc_88(foreground_number)
+            return DisplayCommon.color_desc_88(foreground_number)
         end
-        return color_desc_256(foreground_number)
+        return DisplayCommon.color_desc_256(foreground_number)
     end
 
     def foreground
@@ -600,7 +602,7 @@ class AttrSpec
                 scolor = BASIC_COLORS.index(part)
                 flags |= FG_BASIC_COLOR
             elsif @value & HIGH_88_COLOR != 0
-                scolor = parse_color_88(part)
+                scolor = DisplayCommon.parse_color_88(part)
                 flags |= FG_HIGH_COLOR
             else
                 scolor = DisplayCommon.parse_color_256(part)
@@ -632,9 +634,9 @@ class AttrSpec
             return BASIC_COLORS[background_number]
         end
         if @value & HIGH_88_COLOR != 0
-            return color_desc_88(background_number)
+            return DisplayCommon.color_desc_88(background_number)
         end
-        return color_desc_256(background_number)
+        return DisplayCommon.color_desc_256(background_number)
     end
         
     def background=(background)
@@ -645,7 +647,7 @@ class AttrSpec
             color = BASIC_COLORS.index(background)
             flags |= BG_BASIC_COLOR
         elsif @value & HIGH_88_COLOR != 0
-            color = parse_color_88(background)
+            color = DisplayCommon.parse_color_88(background)
             flags |= BG_HIGH_COLOR
         else
             color = DisplayCommon.parse_color_256(background)

@@ -2,19 +2,20 @@
 
 $VERBOSE=true
 require 'ncurses'
+require 'qbedit/display/str_util'
 require 'qbedit/display/util'
 require 'qbedit/display/escape'
 require 'qbedit/display/display_common'
 
+# TODO: use init_color and can_change_color? to change color palette values
+# on supporting terminals
 module CursesDisplay
-
-RealTerminal = DisplayCommon::RealTerminal
 
 KEY_RESIZE = 410 # curses.KEY_RESIZE (sometimes not defined)
 KEY_MOUSE = 409 # curses.KEY_MOUSE
 
 CURSES_COLORS = {
-  'default'=>		[-1,			0],
+  'default'=>		[-1, 0],
   'black'=>		[Ncurses::COLOR_BLACK,	0],
   'dark red'=>		[Ncurses::COLOR_RED,	0],
   'dark green'=>		[Ncurses::COLOR_GREEN,	0],
@@ -33,13 +34,10 @@ CURSES_COLORS = {
   'white'=>		[Ncurses::COLOR_WHITE,	1],
 }
 
-class Screen < RealTerminal
+class Screen < DisplayCommon::RealTerminal
   def initialize
     super
-    @curses_pairs = [
-      [nil,nil], # Can't be sure what pair 0 will default to
-    ]
-    @palette = {}
+    @color_pairs = {}
     @has_color = false
     @s = nil
     @cursor_state = nil
@@ -57,69 +55,6 @@ class Screen < RealTerminal
   end
 
   attr_reader :started
-
-  # Register a list of palette entries.
-  #
-  # l -- list of (name, foreground, background, mono),
-  #      (name, foreground, background) or
-  #      (name, same_as_other_name) palette entries.
-  #
-  # calls self.register_palette_entry for each item in l
-  def register_palette(l)
-    l.each {|item| 
-      if [3,4].include? item.length
-        register_palette_entry( *item )
-        next
-      end
-      raise "Invalid register_palette usage" unless item.length == 2
-      name, like_name = *item
-      if !palette.has_key? like_name
-        raise Exception, "palette entry '%s' doesn't exist"%like_name
-      end
-      @palette[name] = @palette[like_name]
-    }
-  end
-
-  # Register a single palette entry.
-  #
-  # name -- new entry/attribute name
-  # foreground -- foreground color, one of: 'black', 'dark red',
-  # 	'dark green', 'brown', 'dark blue', 'dark magenta',
-  # 	'dark cyan', 'light gray', 'dark gray', 'light red',
-  # 	'light green', 'yellow', 'light blue', 'light magenta',
-  # 	'light cyan', 'white', 'default' (black if unable to
-  # 	use terminal's default)
-  # background -- background color, one of: 'black', 'dark red',
-  # 	'dark green', 'brown', 'dark blue', 'dark magenta',
-  # 	'dark cyan', 'light gray', 'default' (light gray if
-  # 	unable to use terminal's default)
-  # mono -- monochrome terminal attribute, one of: None (default),
-  # 	'bold',	'underline', 'standout', or a tuple containing
-  # 	a combination eg. ('bold','underline')
-  def register_palette_entry(name, foreground, background, mono=nil)
-    raise if @started
-
-    fg_a, fg_b = *CURSES_COLORS[foreground]
-    bg_a, bg_b = *CURSES_COLORS[background]
-    if bg_b && bg_b != 0 # can't do bold backgrounds
-      raise Exception.new("%s is not a supported background color"%background )
-    end
-    raise unless (mono.nil? ||
-      [nil, 'bold', 'underline', 'standout'].include?(mono) ||
-      mono.class==[].class)
-  
-    pair = []
-    (0..@curses_pairs.length-1).each {|i|
-      pair = @curses_pairs[i]
-      break if pair == [fg_a, bg_a]
-    }
-    if pair != [fg_a, bg_a]
-      i = @curses_pairs.length
-      @curses_pairs << [fg_a, bg_a]
-    end
-    
-    @palette[name] = [i, fg_b, mono]
-  end
     
   # Enable mouse tracking.  
   # 
@@ -157,7 +92,6 @@ class Screen < RealTerminal
         @has_default_colors=false
       end
     end
-    setup_color_pairs()
     Ncurses.noecho()
     Ncurses.meta(@s, 1)
     Ncurses.halfdelay(10) # use set_input_timeouts to adjust
@@ -177,7 +111,7 @@ class Screen < RealTerminal
     Ncurses.echo()
     curs_set(1)
     begin
-      curses.endwin()
+      Ncurses.endwin()
     rescue
       # don't block original error with curses error
     end
@@ -202,64 +136,42 @@ class Screen < RealTerminal
     end
   end
 
-  def setup_color_pairs
-    k = 1
-    if @has_color
-      if @curses_pairs.length > Ncurses.COLOR_PAIRS()
-        raise Exception.new("Too many color pairs!  Use fewer combinations.")
-      end
-    
-      @curses_pairs[1..-1].each {|a|
-        fg,bg = *a
-        if !@has_default_colors && fg == -1
-          fg = CURSES_COLORS["black"][0]
-        end
-        if !@has_default_colors && bg == -1
-          bg = CURSES_COLORS["light gray"][0]
-        end
-        Ncurses.init_pair(k,fg,bg)
-        k+=1
-      }
+  def get_color_pair(fg,bg)
+    return 0 if !@has_color
+
+    # get the color numbers for fg and bg
+    if !@has_default_colors && fg == -1
+      fg = CURSES_COLORS["black"][0]
     end
-    wh, bl = Ncurses::COLOR_WHITE, Ncurses::COLOR_BLACK
-    
-    @attrconv = {}
-    @palette.items.each {|name, b|
-      cp, a, mono = *b
-      if @has_color
-        @attrconv[name] = (cp << 8)
-        @attrconv[name] |= Ncurses::A_BOLD if a
-      elsif mono.class == [].class
-        attr = 0
-        mono.each{ |m|
-          attr |= curses_attr(m)
-        }
-        @attrconv[name] = attr
-      else
-        attr = curses_attr(mono)
-        @attrconv[name] = attr
-      end
-    }
+    if !@has_default_colors && bg == -1
+      bg = CURSES_COLORS["light gray"][0]
+    end
+
+    pair = @color_pairs[[fg,bg]]
+    if !pair.nil?
+      # re-insert the pair to make sure the least recently used pairs
+      # are shifted first
+      @color_pairs.delete([[fg,bg]])
+      @color_pairs[[fg,bg]] = pair
+      return pair 
+    end
+
+    # add a new color pair
+    if @color_pairs.length > Ncurses.COLOR_PAIRS-1
+      # shift the least-recently used pair to make room
+      @color_pairs.shift
+    end
+    Ncurses.init_pair(@color_pairs.length+1,fg,bg)
+    @color_pairs[[fg,bg]] = @color_pairs.length+1
+    return @color_pairs[[fg,bg]]
   end
   
-  def curses_attr(a)
-    if a == 'bold'
-      return Ncurses::A_BOLD
-    elsif a == 'standout'
-      return Ncurses::A_STANDOUT
-    elsif a == 'underline'
-      return Ncurses::A_UNDERLINE
-    else
-      return 0
-    end
-  end
-
   def curs_set(x)
     if @cursor_state== "fixed" || x == @cursor_state
       return
     end
     begin
-      curses.curs_set(x)
+      Ncurses.curs_set(x)
       @cursor_state = x
     rescue
       @cursor_state = "fixed"
@@ -276,9 +188,9 @@ class Screen < RealTerminal
       return self.getch_nodelay()
     end
     if wait_tenths.nil?
-      curses.cbreak()
+      Ncurses.cbreak()
     else
-      curses.halfdelay(wait_tenths)
+      Ncurses.halfdelay(wait_tenths)
     end
     @s.nodelay(0)
     return @s.getch()
@@ -314,16 +226,16 @@ class Screen < RealTerminal
   # 	window resize operation
   def set_input_timeouts(max_wait=nil, complete_wait=0.1, resize_wait=0.1)
     
-    def convert_to_tenths(s)
+    convert_to_tenths = lambda do |s|
       if s.nil?
         return nil
       end
       return ((s+0.05)*10).to_i
     end
 
-    @max_tenths = convert_to_tenths(max_wait)
-    @complete_tenths = convert_to_tenths(complete_wait)
-    @resize_tenths = convert_to_tenths(resize_wait)
+    @max_tenths = convert_to_tenths.call(max_wait)
+    @complete_tenths = convert_to_tenths.call(complete_wait)
+    @resize_tenths = convert_to_tenths.call(resize_wait)
   end
   
   # Return pending input as a list.
@@ -365,17 +277,17 @@ class Screen < RealTerminal
   def get_input(raw_keys=false)
     raise unless @started
     
-    keys, raw = get_input( @max_tenths )
+    keys, raw = _get_input( @max_tenths )
     
     # Avoid pegging CPU at 100% when slowly resizing, and work
     # around a bug with some braindead curses implementations that 
     # return "no key" between "window resize" commands 
     if keys==['window resize'] && @prev_input_resize
       while true
-        keys, raw2 = get_input(@resize_tenths)
+        keys, raw2 = _get_input(@resize_tenths)
         raw += raw2
         if !keys
-          keys, raw2 = get_input(@resize_tenths)
+          keys, raw2 = _get_input(@resize_tenths)
           raw += raw2
         end
         if keys!=['window resize']
@@ -404,7 +316,7 @@ class Screen < RealTerminal
   # this works around a strange curses bug with window resizing 
   # not being reported correctly with repeated calls to this
   # function without a doupdate call in between
-  def get_input(wait_tenths)
+  def _get_input(wait_tenths)
     Ncurses.doupdate() 
     
     key = getch(wait_tenths)
@@ -427,7 +339,7 @@ class Screen < RealTerminal
     processed = []
     
     begin
-      while keys
+      while keys && keys.length>0
         run, keys = Escape.process_keyqueue(keys, true)
         processed += run
       end
@@ -444,7 +356,7 @@ class Screen < RealTerminal
         end
         key = getch_nodelay()
       end
-      while keys
+      while keys && keys.length>0
         run, keys = Escape.process_keyqueue(keys, false)
         processed += run
       end
@@ -461,50 +373,50 @@ class Screen < RealTerminal
   def encode_mouse_event
     last = _next = @last_bstate
     mevent = Ncurses::MEVENT.new
-    Ncurses.getmouse(bstate)
+    Ncurses.getmouse(mevent)
     id,x,y,z,bstate = mevent.id, mevent.x, mevent.y, mevent.z, mevent.bstate
     
     mod = 0
-    mod |= 4 if bstate & Ncurses::BUTTON_SHIFT
-    mod |= 8 if bstate & Ncurses::BUTTON_ALT
-    mod |= 16 if bstate & Ncurses::BUTTON_CTRL
+    mod |= 4 if bstate & Ncurses::BUTTON_SHIFT != 0
+    mod |= 8 if bstate & Ncurses::BUTTON_ALT != 0
+    mod |= 16 if bstate & Ncurses::BUTTON_CTRL != 0
     
     l = []
-    def append_button( b )
+    append_button = lambda do |b|
       b |= mod
       l += [ 27, '['.ord, 'M'.ord, b+32, x+33, y+33 ]
     end
     
-    if bstate & Ncurses::BUTTON1_PRESSED && last & 1 == 0
-      append_button( 0 )
+    if bstate & Ncurses::BUTTON1_PRESSED != 0 && last & 1 == 0
+      append_button.call( 0 )
       _next |= 1
     end
-    if bstate & Ncurses::BUTTON2_PRESSED && last & 2 == 0
-      append_button( 1 )
+    if bstate & Ncurses::BUTTON2_PRESSED != 0 && last & 2 == 0
+      append_button.call( 1 )
       _next |= 2
     end
-    if bstate & Ncurses::BUTTON3_PRESSED && last & 4 == 0
-      append_button( 2 )
+    if bstate & Ncurses::BUTTON3_PRESSED != 0 && last & 4 == 0
+      append_button.call( 2 )
       _next |= 4
     end
-    if bstate & Ncurses::BUTTON4_PRESSED && last & 8 == 0
-      append_button( 64 )
+    if bstate & Ncurses::BUTTON4_PRESSED != 0 && last & 8 == 0
+      append_button.call( 64 )
       _next |= 8
     end
-    if bstate & Ncurses::BUTTON1_RELEASED && last & 1
-      append_button( 0 + escape.MOUSE_RELEASE_FLAG )
+    if bstate & Ncurses::BUTTON1_RELEASED != 0 && last & 1
+      append_button.call( 0 + Escape::MOUSE_RELEASE_FLAG )
       _next &= ~ 1
     end
-    if bstate & Ncurses::BUTTON2_RELEASED && last & 2
-      append_button( 1 + escape.MOUSE_RELEASE_FLAG )
+    if bstate & Ncurses::BUTTON2_RELEASED != 0 && last & 2
+      append_button.call( 1 + Escape::MOUSE_RELEASE_FLAG )
       _next &= ~ 2
     end
-    if bstate & Ncurses::BUTTON3_RELEASED && last & 4
-      append_button( 2 + escape.MOUSE_RELEASE_FLAG )
+    if bstate & Ncurses::BUTTON3_RELEASED != 0 && last & 4
+      append_button.call( 2 + Escape::MOUSE_RELEASE_FLAG )
       _next &= ~ 4
     end
-    if bstate & Ncurses::BUTTON4_RELEASED && last & 8
-      append_button( 64 + escape.MOUSE_RELEASE_FLAG )
+    if bstate & Ncurses::BUTTON4_RELEASED != 0 && last & 8
+      append_button.call( 64 + Escape::MOUSE_RELEASE_FLAG )
       _next &= ~ 8
     end
     
@@ -543,6 +455,8 @@ class Screen < RealTerminal
 
   # Return the terminal dimensions (num columns, num rows).
   def get_cols_rows
+    cols = []
+    rows = []
     Ncurses.getmaxyx(@s, cols, rows)
     rows = rows[0]
     cols = cols[0]
@@ -554,22 +468,39 @@ class Screen < RealTerminal
       @s.attrset( 0 )
       return
     end
-    if !@attrconv.has_key?(a)
-      raise Exception, "Attribute %s not registered!"%a.to_s
+    # if both high and basic are unset, reset to default colors
+    if !(a.foreground_high || a.foreground_basic ||
+         a.background_high || a.background_basic)
+      pair = 0 
+    else
+      foreground_number = a.foreground_number
+      background_number = a.background_number
+
+      if !(a.foreground_high || a.foreground_basic)
+        foreground_number = DisplayCommon::BASIC_COLORS.index(DisplayCommon::WHITE)
+      end
+      if !(a.background_high || a.background_basic)
+        background_number = DisplayCommon::BASIC_COLORS.index(DisplayCommon::BLACK)
+      end
+      pair = get_color_pair(foreground_number, background_number)
     end
-    @s.attrset( @attrconv[a] )
+    attr = (pair << 8) | 
+      (a.bold ? Ncurses::A_BOLD : 0) | 
+      (a.standout ? Ncurses::A_STANDOUT : 0) | 
+      (a.underline ? Ncurses::A_UNDERLINE : 0)
+    @s.attrset(attr)
   end
       
   # Paint screen with rendered canvas.
   def draw_screen(cr, r )
     cols, rows = *cr
     raise unless @started
-    
-    raise  "canvas size and passed size don't match" unless r.rows() == rows
   
     y = -1
-    r.content().each{ |row|
+    r.content().each do |row|
       y += 1
+      break if y >= rows
+
       begin
         @s.move( y, 0 )
       rescue
@@ -581,8 +512,25 @@ class Screen < RealTerminal
       first = true
       lasta = nil
       nr = 0
-      row.each{ |b|
+      move_right = 0
+      skip_right = 0
+      x = -1
+      row.each do |b|
         a, cs, seg = *b
+        x += 1
+        if skip_right > 0
+          skip_right -= 1
+          next
+        end
+        if seg.length == 0
+          move_right += 1
+          next
+        end
+        if move_right > 0
+          @s.move(y, x)
+          move_right = 0
+        end
+
         seg.tr!( *@trans_table )
         if first || lasta != a
           setattr(a)
@@ -597,10 +545,12 @@ class Screen < RealTerminal
             raise unless cs.nil?
             @s.addstr( seg )
           end
+          width = StrUtil.calc_width(seg, 0, seg.length)
+          skip_right = [0, width-1].max
         rescue
           # it's ok to get out of the
           # screen on the lower right
-          if (y == rows-1 && nr == row.length-1)
+          if y == rows-1 && nr == row.length-1
           else
             # perhaps screen size changed
             # quietly abort.
@@ -608,8 +558,8 @@ class Screen < RealTerminal
           end
         end
         nr += 1
-      }
-    }
+      end
+    end
     if !r.cursor.nil?
       x,y = *r.cursor
       curs_set(1)
@@ -624,79 +574,6 @@ class Screen < RealTerminal
     
     @s.refresh()
     @keep_cache_alive_link = r
-  end
-
-  # Force the screen to be completely repainted on the next
-  # call to draw_screen().
-  def clear
-    @s.clear()
-  end
-end
-
-class Test
-  class FakeRender < DisplayCommon::Render
-  end
-
-  def initialize
-    @ui = Screen.new
-    @l = CURSES_COLORS.keys()
-    @l.sort!
-    @l.each{ |c|
-      @ui.register_palette( [
-        [c+" on black", c, 'black', 'underline'],
-        [c+" on dark blue",c, 'dark blue', 'bold'],
-        [c+" on light gray",c,'light gray', 'standout'],
-      ])
-    }
-    @ui.run_wrapper(method(:run))
-  end
-    
-  def run
-    r = FakeRender.new
-    text = ["  has_color = "+@ui.has_color.to_s,""]
-    _attr = [[],[]]
-    
-    @l.each{ |c|
-      t = ""
-      a = []
-      [c+" on black",c+" on dark blue",c+" on light gray"].each{ |p|
-        a << [p,27]
-        t=t+ (p+27*" ")[0..26]
-      }
-      text.append( t )
-      _attr.append( a )
-    }
-
-    text += ["","return values from get_input(): (q exits)", ""]
-    _attr += [[],[],[]]
-    cols,rows = @ui.get_cols_rows()
-    keys = nil
-    while keys!=['q']
-      r.text=(text.map {|t| t.ljust(cols)}+[""]*rows)[0..rows-1]
-      r.attr=(_attr+[[]]*rows)[0..rows-1]
-      @ui.draw_screen([cols,rows],r)
-      keys, raw = @ui.get_input( raw_keys = true )
-      if keys.include? 'window resize'
-        cols, rows = @ui.get_cols_rows()
-      end
-      if !keys
-        next
-      end
-      t = ""
-      a = []
-      keys.each{ |k|
-        if k.class == ''.class 
-          k = k.encode("utf-8")
-        end
-        t += "'"+k+"' "
-        a += [[nil,1], ['yellow on dark blue',k.length], [nil,2]]
-      }
-      
-      text << (t + ": "+ raw.to_s)
-      _attr << a
-      text = text[-rows..-1]
-      _attr = _attr[-rows..-1]
-    end
   end
 end
 

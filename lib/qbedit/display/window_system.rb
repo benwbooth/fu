@@ -23,7 +23,12 @@ end
 
 if __FILE__ == $0
   require 'qbedit/display/main_loop'
+  require 'qbedit/display/curses_display'
   w=WindowSystem.new
+  # screen = CursesDisplay::Screen.new
+  # screen.start
+  # m=MainLoop::MainLoop.new(w, [], screen)
+
   m=MainLoop::MainLoop.new(w)
   m.run
 end

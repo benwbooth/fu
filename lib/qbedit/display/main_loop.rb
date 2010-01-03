@@ -249,8 +249,8 @@ class MainLoop
         while true
             draw_screen()
 
-            if !next_alarm && @event_loop.alarms
-                next_alarm = @alarms.shift
+            if !next_alarm && @event_loop.alarms && @event_loop.alarms.length>0
+                next_alarm = @event_loop.alarms.shift
             end
 
             keys = nil
@@ -261,7 +261,7 @@ class MainLoop
                 else
                     @screen.set_input_timeouts(nil)
                 end
-                keys, raw = screen.get_input(true)
+                keys, raw = @screen.get_input(true)
                 if !keys && next_alarm
                     sec = next_alarm[0] - Time.now.to_f
                     if sec <= 0
@@ -284,7 +284,7 @@ class MainLoop
                 tm, callback, user_data = next_alarm
                 callback.call(user_data)
                 
-                if @alarms
+                if @event_loop.alarms && @event_loop.alarms.length>0
                     next_alarm = @event_loop.alarms.shift
                 else
                     next_alarm = nil
@@ -390,6 +390,8 @@ end
 # writing
 # hi
 class SelectEventLoop
+    attr_accessor :alarms
+
     def initialize
         @alarms = []
         @watch_files = {}

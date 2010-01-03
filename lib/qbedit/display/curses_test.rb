@@ -6,6 +6,12 @@ module Test
 
     @s = Ncurses.initscr() # instead of init_screen
     Ncurses.start_color() # instead of init_screen
+
+    #new test
+    Ncurses.curs_set(1)
+    Ncurses.endwin()
+
+
     puts Ncurses.COLOR_PAIRS()
     puts Ncurses.COLORS()
     Ncurses.use_default_colors()
@@ -58,6 +64,8 @@ module Test
     puts Ncurses::BUTTON2_RELEASED
     puts Ncurses::BUTTON3_RELEASED
     puts Ncurses::BUTTON4_RELEASED
+
+
   end
 
   mytest()

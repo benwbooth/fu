@@ -1,6 +1,5 @@
 require 'stringio'
 require 'qbedit/display/display_common'
-require 'qbedit/display/raw_display'
 
 class Canvas
   attr_accessor :content
@@ -486,22 +485,28 @@ end
 
 if __FILE__ == $0
   c=Canvas.new
-  #c.draw("[fg green]_*abc*_d[fg]ef  \n\n[color white darkblue]hello[color] there")
-  a=Canvas::Text.new {[
-     pos(0,'+1') {[
-      fg('orange') {[bold {'abc'}, 'd']},"ef  \n\n",color('black','yellow') {'hello'}, " there\n\n", standout {"still here"}
-     ]}
-  ]}
-  # s = c.serialize(a)
-  # c.draw(s)
-  c.draw('*a*')
+  # c.draw {[
+  #    pos(0,'+1') {[
+  #     fg('orange') {[bold {'abc'}, 'd']},"ef  \n\n",color('black','yellow') {'hello'}, " there\n\n", standout {"still here"}
+  #    ]}
+  # ]}
+  c.draw('*a*bcdefg')
+  p c.content
 
-  out = StringIO.new
-  rd = RawDisplay::Screen.new(out)
+  require 'qbedit/display/curses_display'
+  rd = CursesDisplay::Screen.new
   rd.start
   rd.draw_screen(c.rowcol, c)
-  puts out.string
-  rd.stop
-  p out.string
+  #rd.stop
+
+  # require 'qbedit/display/raw_display'
+  # p out.string
+  # out = StringIO.new
+  # rd = RawDisplay::Screen.new(out)
+  # rd.start
+  # rd.draw_screen(c.rowcol, c)
+  # puts out.string
+  # rd.stop
+  # p out.string
 end
 

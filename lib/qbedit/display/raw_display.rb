@@ -63,6 +63,7 @@ class Screen < DisplayCommon::BaseScreen
         @maxrow = nil
         @gpm_mev = nil
         @gpm_event_pending = false
+        @gpm_buffer = ''
         @last_bstate = 0
         @setup_G1_done = false
         @rows_used = nil
@@ -218,17 +219,13 @@ class Screen < DisplayCommon::BaseScreen
         if !(ENV['TERM']||'').downcase().start_with? "linux"
             return
         end
-        if !IO.respond_to? 'popen'
-            return
-        end
-        m = IO.popen(["/usr/bin/mev","-e","158"])
+        m = IO.popen(['/usr/bin/mev','-e','158'])
         m.fcntl(Fcntl::F_SETFL, Fcntl::O_NONBLOCK)
         @gpm_mev = m
     end
     
     def stop_gpm_tracking
-        Process.kill(signal.SIGINT, @gpm_mev.pid)
-        Process.waitpid(@gpm_mev.pid, 0)
+        @gpm_mev.close
         @gpm_mev = nil
     end
 
@@ -414,7 +411,7 @@ class Screen < DisplayCommon::BaseScreen
     def get_input_descriptors
         fd_list = [@term_input_file, @resize_pipe_rd]
         if !@gpm_mev.nil?
-            fd_list << @gpm_mev.stdout
+            fd_list << @gpm_mev
         end
         return fd_list
     end
@@ -452,10 +449,8 @@ class Screen < DisplayCommon::BaseScreen
         codes = []
         if !@gpm_mev.nil?
             begin
-                while true
-                    codes += encode_gpm_event()
-                end
-            rescue IOError, e
+                codes += encode_gpm_events
+            rescue IOError=>e
                 raise
             end
         end
@@ -466,7 +461,7 @@ class Screen < DisplayCommon::BaseScreen
         ready = nil
         fd_list = [@term_input_file]
         if !@gpm_mev.nil?
-            fd_list << @gpm_mev.stdout
+            fd_list << @gpm_mev
         end
         while true
             begin
@@ -493,7 +488,7 @@ class Screen < DisplayCommon::BaseScreen
     def getch(timeout)
         ready = wait_for_input_ready(timeout)
         if !@gpm_mev.nil?
-            if ready.include? @gpm_mev.stdout
+            if ready.include? @gpm_mev
                 @gpm_event_pending = true
             end
         end
@@ -508,81 +503,110 @@ class Screen < DisplayCommon::BaseScreen
         return -1
     end
     
-    def encode_gpm_event
+    def encode_gpm_events
         @gpm_event_pending = false
-        s = @gpm_mev.stdout.gets
-        l = s.split(",")
-        if l.length != 6
-            # unexpected output, stop tracking
-            stop_gpm_tracking()
-            return []
-        end
-        ev, x, y, ign, b, m = *s.split(",")
-        ev = ev.hex
-        x = x.split(" ")[-1].to_i
-        y = y.lstrip.split(" ")[0].to_i
-        b = b.split(" ")[-1].to_i
-        m = m.rstrip.hex
 
-        # convert to xterm-like escape sequence
-
-        last = _next = @last_bstate
-        l = []
-        
-        mod = 0
-        if m & 1 != 0
-          mod |= 4 # shift
-        end
-        if m & 10 != 0
-          mod |= 8 # alt
-        end
-        if m & 4 != 0
-          mod |= 16 # ctrl
+        # read nonblocking from the gpm pipe
+        while true
+          begin
+            r = @gpm_mev.read_nonblock(1024)
+            @gpm_buffer += r
+          rescue
+            break
+          end
         end
 
-        def append_button( b )
-            b |= mod
-            l += [ 27, '['.ord, 'M'.ord, b+32, x+32, y+32 ]
+        # store unfinished lines for later processing
+        lines = @gpm_buffer.split(/(?<=\n)/)
+        if !lines[-1].nil? && !lines[-1].match(/\n$/)
+          @gpm_buffer = lines[-1] 
+        else
+          @gpm_buffer = ''
         end
 
-        if ev == 20 # press
-            if b & 4 != 0 && last & 1 == 0
-                append_button( 0 )
-                _next |= 1
-            end
-            if b & 2 != 0 && last & 2 == 0
-                append_button( 1 )
-                _next |= 2
-            end
-            if b & 1 != 0 && last & 4 == 0
-                append_button( 2 )
-                _next |= 4
-            end
-        elsif ev == 146 # drag
-            if b & 4 != 0
-                append_button( 0 + Escape::MOUSE_DRAG_FLAG )
-            elsif b & 2 != 0
-                append_button( 1 + Escape::MOUSE_DRAG_FLAG )
-            elsif b & 1 != 0
-                append_button( 2 + Escape::MOUSE_DRAG_FLAG )
-            end
-        else # release
-            if b & 4 != 0 && last & 1 != 0
-                append_button( 0 + Escape::MOUSE_RELEASE_FLAG )
-                _next &= ~ 1
-            end
-            if b & 2 != 0 && last & 2 != 0
-                append_button( 1 + Escape::MOUSE_RELEASE_FLAG )
-                _next &= ~ 2
-            end
-            if b & 1 != 0 && last & 4 != 0
-                append_button( 2 + Escape::MOUSE_RELEASE_FLAG )
-                _next &= ~ 4
-            end
+        codes = []
+        lines.each do |line|
+          l = line.chomp
+
+          m = l.match(/\A\s*mouse:\s*event\s+ ([^,\s]+) \s*,\s*
+                      at\s* (\d+)\s*,\s*(\d+)\s*
+                      \(\s*delta\s* (\d+)\s*,\s*(\d+)\s*\)\s*,\s* 
+                      buttons\s* (\d+)\s*,\s*
+                      modifiers\s+ ([^,\s]+)
+                      \s*\z/x)
+          if !m
+              # unexpected output, stop tracking
+              stop_gpm_tracking()
+              return []
+          end
+          ev, x, y, dx, dy, b, m = *m.captures
+          ev = ev.hex
+          x = x.to_i
+          y = y.to_i
+          dx = dx.to_i
+          dy = dy.to_i
+          b  = b.to_i
+          m = m.hex
+
+          # convert to xterm-like escape sequence
+          last = _next = @last_bstate
+          l = []
+          
+          mod = 0
+          if m & 1 != 0
+            mod |= 4 # shift
+          end
+          if m & 10 != 0
+            mod |= 8 # alt
+          end
+          if m & 4 != 0
+            mod |= 16 # ctrl
+          end
+
+          append_button = lambda do |_b|
+              _b |= mod
+              l += [ 27, '['.ord, 'M'.ord, _b+32, x+32, y+32 ]
+          end
+
+          if ev == 20 # press
+              if b & 4 != 0 && last & 1 == 0
+                  append_button.call( 0 )
+                  _next |= 1
+              end
+              if b & 2 != 0 && last & 2 == 0
+                  append_button.call( 1 )
+                  _next |= 2
+              end
+              if b & 1 != 0 && last & 4 == 0
+                  append_button.call( 2 )
+                  _next |= 4
+              end
+          elsif ev == 146 # drag
+              if b & 4 != 0
+                  append_button.call( 0 + Escape::MOUSE_DRAG_FLAG )
+              elsif b & 2 != 0
+                  append_button.call( 1 + Escape::MOUSE_DRAG_FLAG )
+              elsif b & 1 != 0
+                  append_button.call( 2 + Escape::MOUSE_DRAG_FLAG )
+              end
+          else # release
+              if b & 4 != 0 && last & 1 != 0
+                  append_button.call( 0 + Escape::MOUSE_RELEASE_FLAG )
+                  _next &= ~ 1
+              end
+              if b & 2 != 0 && last & 2 != 0
+                  append_button.call( 1 + Escape::MOUSE_RELEASE_FLAG )
+                  _next &= ~ 2
+              end
+              if b & 1 != 0 && last & 4 != 0
+                  append_button.call( 2 + Escape::MOUSE_RELEASE_FLAG )
+                  _next &= ~ 4
+              end
+          end
+          @last_bstate = _next
+          codes += l
         end
-            
-        @last_bstate = _next
-        return l
+        return codes
     end
     
     def getch_nodelay()
@@ -710,7 +734,7 @@ class Screen < DisplayCommon::BaseScreen
         ins = nil
         o << set_cursor_home.call
         cy = 0
-        r.content().each {|row|
+        r.content().each do |row|
             y += 1
             break if y >= maxrow
 
@@ -747,8 +771,13 @@ class Screen < DisplayCommon::BaseScreen
             first = true
             lasta = lastcs = nil
             move_right = 0
-            row.each{ |_|
+            skip_right = 0
+            row.each do |_|
                 a,cs,run = _
+                if skip_right > 0
+                  skip_right -= 1
+                  next
+                end
                 if run.length == 0
                   move_right += 1
                   next
@@ -760,7 +789,7 @@ class Screen < DisplayCommon::BaseScreen
 
                 run.tr!(*@trans_table)
                 if first || lasta != a
-                    o << attr_to_escape.call(a)
+                    o << attr_to_escape.call(a) if !a.nil?
                     lasta = a
                 end
                 if first || (lastcs != cs)
@@ -773,11 +802,14 @@ class Screen < DisplayCommon::BaseScreen
                     lastcs = cs
                 end
                 o << run
+                width = StrUtil.calc_width(run, 0, run.length)
+                skip_right = [0, width-1].max
                 first = false
-            }
+            end
             if ins
                 inserta, insertcs, inserttext = *ins
-                ias = attr_to_escape.call(inserta)
+                ias = ''
+                ias = attr_to_escape.call(inserta) if !inserta.nil?
                 raise insertcs.to_s unless [nil, "0"].include? insertcs
                 if insertcs.nil?
                     icss = Escape::SI
@@ -789,7 +821,7 @@ class Screen < DisplayCommon::BaseScreen
                     Escape::INSERT_ON, inserttext,
                     Escape::INSERT_OFF ]
             end
-        }
+        end
         if !r.cursor.nil?
             x,y = r.cursor
             o += [set_cursor_position.call(x, y), 
@@ -812,7 +844,7 @@ class Screen < DisplayCommon::BaseScreen
                 end
             }
             @term_output_file.flush
-        rescue IOError, e
+        rescue IOError=>e
             raise
         end
 
