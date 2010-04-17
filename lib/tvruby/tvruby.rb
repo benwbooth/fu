@@ -1,3 +1,0 @@
-class TRect
-end
-
