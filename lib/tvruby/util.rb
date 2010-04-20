@@ -1,4 +1,4 @@
-module Util
+module TVRuby::Util
 
   def self.fexpand( char * )
   end

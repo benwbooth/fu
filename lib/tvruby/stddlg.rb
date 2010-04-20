@@ -1,4 +1,4 @@
-module Stddlg
+module TVRuby::Stddlg
   # Commands
   CmFileOpen    = 1001   # Returned from TFileDialog when Open pressed
   CmFileReplace = 1002   # Returned from TFileDialog when Replace pressed

@@ -1,4 +1,4 @@
-module Drawbuf
+module TVRuby::Drawbuf
   #
   # This class implements a video buffer.
   # 

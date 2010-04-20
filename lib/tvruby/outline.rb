@@ -1,4 +1,4 @@
-module Outline
+module TVRuby::Outline
   OvExpanded = 0x01
   OvChildren = 0x02
   OvLast     = 0x04

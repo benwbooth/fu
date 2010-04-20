@@ -1,4 +1,4 @@
-module Objects
+module TVRuby::Objects
 
   #
   # A screen coordinate. TPoint implements points on the screen with several

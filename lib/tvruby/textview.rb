@@ -1,4 +1,4 @@
-module Textview
+module TVRuby::Textview
   #
   # TTextDevice is a scrollable TTY-type text viewer/device driver.
   # 

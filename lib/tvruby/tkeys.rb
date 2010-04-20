@@ -1,4 +1,4 @@
-module Tkeys
+module TVRuby::Tkeys
 
 #   Control keys
 # 

@@ -1,4 +1,4 @@
-module App
+module TVRuby::App
 # Turbo Vision 2.0 Color Palettes
 
   CpAppColor =

@@ -1,4 +1,4 @@
-module Help
+module TVRuby::Help
 
   # 
   # Part of the help system.

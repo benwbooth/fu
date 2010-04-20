@@ -1,4 +1,4 @@
-module System
+module TVRuby::System
 
   # Event codes
 

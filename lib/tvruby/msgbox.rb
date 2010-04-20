@@ -1,4 +1,4 @@
-module Msgbox
+module TVRuby::Msgbox
 
   #  \fn messageBox( const char *msg, ushort aOptions )
   # Displays a message box with the given string in `msg'. `aOptions' is a

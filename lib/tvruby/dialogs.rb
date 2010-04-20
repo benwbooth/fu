@@ -1,4 +1,4 @@
-module Dialogs
+module TVRuby::Dialogs
   # \var bfNormal
   # Button is a normal, non-default button.
   # @see TButton::flag

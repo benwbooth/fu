@@ -1,4 +1,4 @@
-module Helpbase
+module TVRuby::Helpbase
 
   MagicHeader = 0x46484246
 

@@ -1,4 +1,4 @@
-module Menus
+module TVRuby::Menus
 
   TSubMenu& operator + ( TSubMenu& s, TMenuItem& i );
   TSubMenu& operator + ( TSubMenu& s1, TSubMenu& s2 );

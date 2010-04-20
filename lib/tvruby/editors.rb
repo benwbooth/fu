@@ -1,4 +1,4 @@
-module Editors
+module TVRuby::Editors
 
   UfUpdate = 0x01
   UfLine   = 0x02

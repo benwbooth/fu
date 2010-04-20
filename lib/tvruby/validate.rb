@@ -1,4 +1,4 @@
-module Validate
+module TVRuby::Validate
   # TValidator Status constants
 
   VsOk     =  0
