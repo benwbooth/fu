@@ -1,10 +1,15 @@
 module TVRuby::Colorsel
+  include TVRuby::System
+
   CmColorForegroundChanged = 71
   CmColorBackgroundChanged = 72
   CmColorSet               = 73
   CmNewColorItem           = 74
   CmNewColorIndex          = 75
   CmSaveColorIndex         = 76
+
+  @colorIndexes = 0
+  class << self; attr_accessor :colorIndexes; end
 
   # 
   # Stores information about a color item. TColorItem defines a linked list of
@@ -32,6 +37,9 @@ module TVRuby::Colorsel
       # See file `demo/tvdemo2.cc' for an example. 
       # 
       def initialize(nm, idx, nxt)
+        @index = idx
+        @next = nxt
+        @name = String.new(nm)
       end
 
       # 
@@ -53,6 +61,12 @@ module TVRuby::Colorsel
       # @ref TColorItem::next pointer.
       # 
       def + ( i1, i2 )
+        cur = i1
+        while !cur.next.nil?
+          cur = cur.next
+        end
+        cur.next = i2
+        return i1
       end
   end
 
@@ -82,7 +96,10 @@ module TVRuby::Colorsel
       # 
       # See file `demo/tvdemo2.cc' for an example. 
       # 
-      def initialize(nm, itm = 0, nxt )
+      def initialize(nm, itm = nil, nxt )
+        @items = itm
+        @next = nxt
+        @name = String.new(nm)
       end
 
       #
@@ -116,6 +133,31 @@ module TVRuby::Colorsel
       # @see TColorItem
       # 
       def operator + ( g1, g2 )
+        if g2.is_a? TColorItem
+          grp = g1
+          while !grp.next.nil?
+            grp  grp.next
+          end
+          if grp.items == 0
+            grp.items = g2
+          else
+            cur = grp.items
+            while !cur.next.nil?
+              cur = cur.next
+            end
+            cur.next = i
+          end
+          return g
+        elsif g2.is_a? TColorGroup
+          cur = g1
+          while !cur.next.nil?
+            cur = cur.next
+          end
+          cur.next = g2
+          return g1
+        else
+          raise ArgumentError
+        end
       end
   end
 
@@ -179,12 +221,34 @@ module TVRuby::Colorsel
       # </pre>
       # 
       def initialize ( bounds, aSelType )
+        super(bounds)
+        @options |= OfSelectable | OfFirstClick | OfFramed
+        @eventMask |= EvBroadcast
+        @selType = aSelType
+        @color = 0
       end
 
       #
       # Draws the color selector.
       # 
       def draw
+        b = TDrawBuffer.new
+        b.moveChar(0, ' ', 0x70, size.x )
+        0.upto(size.y) do |i|
+            if i < 4
+              0.upto(3) do |j|
+                c = i*4+j
+                b.moveChar(j*3, icon, c, 3 )
+                if c == color 
+                  b.putChar(j*3+1, 8)
+                  if c == 0
+                    b.putAttribute(j*3+1, 0x70)
+                  end
+                end
+              end
+            end
+            writeLine( 0, i, size.x, 1, b)
+        end
       end
 
       #
@@ -195,6 +259,75 @@ module TVRuby::Colorsel
       # Changes invoke @ref drawView() when appropriate.
       # 
       def handleEvent( event )
+        Width = 4
+
+        TView.handleEvent(event)
+        oldColor = color
+        maxCol = (@selType == CsBackground) ? 7 : 15
+        case event.what
+        when EvMouseDown
+          begin
+            if mouseInView(event.mouse.where)
+              mouse = makeLocal(event.mouse.where)
+              color = mouse.y*4 + mouse.x/3
+            else
+                color = oldColor
+            end
+            colorChanged
+            drawView
+          end while mouseEvent(event, EvMouseMove )
+        when EvKeyDown
+          case ctrlToArrow(event.keyDown.keyCode)
+          when kbLeft
+            if color > 0
+                color-=1
+            else
+                color = maxCol
+            end
+          when KbRight
+              if color < maxCol
+                  color+=1
+              else
+                  color = 0
+              end
+          when KbUp
+            if color > width-1
+                color -= width
+            elsif color == 0
+                color = maxCol
+            else
+                color += maxCol - width
+            end
+          when KbDown
+              if color < maxCol - (width-1)
+                  color += width
+              elsif color == maxCol
+                  color = 0
+              else
+                  color -= maxCol - width
+              end
+          else
+            return
+          end
+        when EvBroadcast
+          if event.message.command == CmColorSet
+              if selType == CsBackground
+                  color = event.message.infoPtr >> 4
+              else
+                  color = event.message.infoPtr & 0x0F
+              end
+              drawView
+              return
+          else
+              return
+          end
+        else
+          return 
+        end
+
+        drawView
+        colorChanged
+        clearEvent(event)
       end
 
       #
@@ -221,6 +354,17 @@ module TVRuby::Colorsel
       # 
       attr_accessor :selType
       protected :color
+
+    private
+      def colorChanged
+        msg = nil
+        if @selType == CsForeground
+          msg = CmColorForegroundChanged
+        else
+          msg = CmColorBackgroundChanged
+        end
+        message(owner, EvBroadcast, msg, @color)
+      end
   end
 
   #
@@ -236,7 +380,10 @@ module TVRuby::Colorsel
   # @short Monochrome color selector
   # 
   class TMonoSelector < TCluster
-  public
+
+      @monoColors = [0x07, 0x0F, 0x01, 0x70, 0x09]
+      class << self; attr_accessor :monoColors; end
+
       #
       # Constructor.
       # 
@@ -247,10 +394,18 @@ module TVRuby::Colorsel
       # @see TCluster::TCluster
       # 
       def initialize( bounds )
+        super(bounds, TSItem.new(normal, 
+                      TSItem.new(highlight, 
+                      TSItem.new(underline, 
+                      TSItem.new(inverse, nil)))))
+        @eventMask |= EvBroadcast
+      end
+
       #
       # Draws the selector cluster.
       # 
       def draw
+        drawBox(button, 0x07)
       end
 
       # 
@@ -260,6 +415,12 @@ module TVRuby::Colorsel
       # selected attribute.
       # 
       def handleEvent( event )
+        TCluster.handleEvent(event)
+        if (event.what == EvBroadcast && 
+            event.message.command == CmColorSet)
+          value = event.message.infoPtr
+          drawView
+        end
       end
 
       #
@@ -267,23 +428,44 @@ module TVRuby::Colorsel
       # False.
       # 
       def mark( item )
+        monoColors[item] == value
       end
 
       #
       # Informs the owning group if the attribute has changed.
       # 
       def newColor
+        message(owner, EvBroadcast, CmColorForegroundChanged, value & 0x0F)
+        message(owner, EvBroadcast, CmColorBackgroundChanged, (value >> 4) & 0x0F)
+      end
 
       #
       # "Presses" the item'th button and calls @ref newColor().
       # 
       def press( item )
+        value = monoColors[item]
+        newColor
       end
 
       #
       # Sets value to the item'th attribute (same effect as @ref press()).
       # 
       def movedTo( item )
+        value = monoColors[item]
+        newColor
+      end
+
+      class << self
+        attr_accessor :button
+        private :button
+        attr_accessor :normal
+        private :normal
+        attr_accessor :highlight
+        private :highlight
+        attr_accessor :underline
+        private :underline
+        attr_accessor :inverse
+        private :inverse
       end
   end
 
@@ -301,7 +483,6 @@ module TVRuby::Colorsel
   # @short Viewer used to display and select colors
   # 
   class TColorDisplay < TView
-  public
       #
       # Constructor.
       # 

@@ -242,7 +242,7 @@ module TVRuby::Editors
 
       def countLines(buf, count)
         num_lines=0
-        buf[0, count].lines {|n| num_lines++}
+        buf[0, count].lines {|n| num_lines+=1}
         num_lines
       end
 
@@ -306,7 +306,7 @@ module TVRuby::Editors
       # Returns the p'th character in the file, factoring in the gap.
       # 
       def bufChar( p )
-        @buffer[p + ((p >= chrPtr) ? gapLen : 0)]
+        @buffer[p + ((p >= @curPtr) ? @gapLen : 0)]
       end
 
       # 
@@ -314,7 +314,7 @@ module TVRuby::Editors
       # factoring in the gap.
       # 
       def bufPtr( p )
-        (p >= curPtr) ? p + gapLen : p
+        (p >= @curPtr) ? p + @gapLen : p
       end
 
       # 
@@ -638,6 +638,59 @@ module TVRuby::Editors
       # `buff'. Used by @ref drawLines().
       # 
       def formatLine(drawbuf, linePtr, width, color)
+        i = 0       # index in the DrawBuf
+        p = linePtr # index in the Buffer
+        curColor
+
+        # draw the first part of the buffer
+        while (p < @curPtr) && (@buffer[p] != "\n") && (i <= width)
+          curColor = (p>=@selStart && p<@selEnd) ? 
+            (color & 0xFF00) :
+            ((color & 0xFF) << 8)
+
+          if @buffer[p] == 0x9
+            begin
+              drawBuf[i] = ' '.ord + curColor
+              i+=1
+            end while ((i % 8) && (i <= width))
+            p+=1
+          else
+            drawBuf[i] = curColor | @buffer[p]
+            p+=1 
+            i+=1
+          end
+        end
+
+        # draw the second part of the buffer
+
+        if p >= @curPtr
+          p += @gapLen
+        
+          while (p < @bufSize) && (@buffer[p] != "\n") && (i <= width)
+            curColor = (p>=@selStart && p<@selEnd) ? 
+              (color & 0xFF00) :
+              ((color & 0xFF) << 8)
+
+            if @buffer[p] == 0x9
+              begin
+                drawBuf[i] = ' '.ord + curColor
+                i+=1
+              end while (i % 8) && (i <= width)
+              p+=1
+            else
+              drawBuf[i] = curColor | @buffer[p]
+              p+=1
+              i+=1
+            end
+          end
+        end
+
+        while (i < width) 
+          curColor = (p>=@selStart && p<@selEnd) ? (color & 0xFF00) : 
+            ((color & 0xFF) << 8)
+          drawBuf[i] = ' '.ord + curColor
+          i+=1
+        end
       end
 
       # 
@@ -708,6 +761,32 @@ module TVRuby::Editors
       # the given pointer `p'.
       # 
       def lineEnd( p )
+        if p < @curPtr
+            while p < @curPtr
+                if @buffer[p] == "\n"
+                    return p
+                else
+                    p+=1
+                end
+            end
+            if @curPtr == @bufLen
+                return @bufLen
+            end
+        else
+            if p == @bufLen
+                return @bufLen
+            end
+        end
+
+        while (p + @gapLen < @bufSize)
+            if @buffer[p + @gapLen] == "\n"
+                return p
+            else
+                p+=1
+            end
+        end
+
+        return p
       end
 
       # 
@@ -722,6 +801,25 @@ module TVRuby::Editors
       # the given pointer `p'.
       # 
       def lineStart( p )
+        while p > @curPtr
+          p -= 1
+          if @buffer[p + @gapLen] == "\n"
+            return p+1
+          end
+        end
+
+        if @curPtr == 0
+            return 0
+        end
+
+        while p > 0
+          p -= 1
+          if @buffer[p] == "\n"
+            return p+1
+          end
+        end
+
+        return 0
       end
 
       # 
@@ -743,6 +841,10 @@ module TVRuby::Editors
       # given offset `p'.
       # 
       def nextChar( p )
+        if p == bufLen 
+          return p
+        end
+        return p+1
       end
 
       # 
@@ -764,6 +866,10 @@ module TVRuby::Editors
       # given offset `p'.
       # 
       def prevChar( p )
+        if p == 0
+          return p
+        end
+        return p-1
       end
 
       # 

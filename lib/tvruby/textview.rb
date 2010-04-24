@@ -99,6 +99,44 @@ module TVRuby::Textview
       # previous to the position given by `pos'.
       # 
       def prevLines( pos, lines )
+        if lines==0
+          bufInc(pos)
+          bufInc(pos)
+          return pos
+        end
+
+        # I don't see the logic in the previous line. But that's what
+        # the .asm file says.
+        if pos==@queBack
+          return @queBack # Nothing to do
+        end
+
+        bufDec(pos) # pos might be pointing to a '\n'
+
+        if pos<@queBack
+          while !( @buffer[pos]=="\n" && lines-1 != 0) && pos != 0
+            lines-=1
+            pos -= 1
+          end
+          if lines != 0
+            pos=bufSize-1
+          end
+        end
+
+        if lines != 0
+          # SS: we should check if there is an available character before read it
+          while pos > @queBack && !(@buffer[pos]=="\n" && lines-1 != 0 )
+            lines-=1
+            pos-=1
+          end
+        end
+
+        if lines
+          return @queBack
+        else 
+          bufInc(pos)
+        end
+        return pos
       end
 
       #

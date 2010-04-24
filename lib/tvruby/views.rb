@@ -1,5 +1,4 @@
 module TVRuby::Views
-
   #  Standard command codes
   CmValid         = 0
   CmQuit          = 1
@@ -1020,6 +1019,18 @@ module TVRuby::Views
       # -# its coordinates make it fully or partially visible on the screen.
       # 
       def exposed
+        if !(@state & SfExposed) || @size.x <= 0 || @size.y <= 0
+          return false
+        end
+
+        vars2 = {}
+        0.upto(@size.y-1) do |y|
+          vars2['y'] = y
+          if exposedRec2(0, @size,x, self, vars2)
+            return true
+          end
+        end
+        return false
       end
 
       #
@@ -1542,8 +1553,16 @@ module TVRuby::Views
       # be used in @ref draw() member functions.
       # @see TDrawBuffer
       # 
-      def writeBuf(  x, y, w, h, b )
-        writeBuf( x, y, w, h, b.data )
+      def writeBuf(  x, y, w, h, buf )
+        if buf.respond_to? data
+          return writeBuf( x, y, w, h, buf.data )
+        end
+        self.lockRefresh += 1
+        0.upto(h-1) do |i|
+          writeView(x,x+w,y+i,buf[w*i]
+        end
+        self.lockRefresh -= 1
+        self.doRefresh(self)
       end
 
       #
@@ -1552,6 +1571,22 @@ module TVRuby::Views
       # palette. Should only be used in @ref draw() functions.
       # 
       def writeChar( x, y, c, color, count )
+        b = []
+        myChar = (mapColor(color)<<8) + c
+        count2 = count
+        if x<0 
+          x=0
+        end
+        if x+count>maxViewWidth
+          return
+        end
+        p = 0 
+        while count != 0
+          count -= 1
+          b[p] = myChar
+          p += 1
+        end
+        writeView(x, x+count2, y, b)
       end
 
       #
@@ -1561,8 +1596,20 @@ module TVRuby::Views
       # times. Should only be used in @ref draw() member functions.
       # @see TDrawBuffer
       # 
-      def writeLine( x, y, w, h, b )
-        writeLine( x, y, w, h, b.data )
+      def writeLine( x, y, w, h, buf )
+        if buf.respond_to? data
+          writeLine( x, y, w, h, buf.data )
+        end
+
+        if h==0
+          return
+        end
+        lockRefresh+=1		# stop the refresh
+        0.upto(h-1) do |i|
+          writeView(x, x+w, y+i, buf)
+        end
+        lockRefresh-=1		# allow the refresh
+        doRefresh(self)
       end
 
       # 
@@ -1571,6 +1618,29 @@ module TVRuby::Views
       # used in @ref draw() member functions.
       # 
       def writeStr( x, y, str, color )
+        if str.nil? 
+          return
+        end
+        l= str.length
+        if l==0 
+          return
+        end
+        if l>maxViewWidth
+          l=maxViewWidth
+        end
+        l2=l
+        myColor=(mapColor(color)) << 8
+        b = Array.new(maxViewWidth)
+        p = b
+
+        str_i=0
+        p_i=0
+        while p[p_i] = myColor+str[str_i]
+          p_i += 1
+          str_i += 1
+          l -= 1
+        end
+        writeView (x, x+l2, y, b )
       end
 
       #
@@ -1901,6 +1971,32 @@ module TVRuby::Views
       # 
       class << self; attr_accessor :errorAttr; end
 
+      @lockRefresh = 0
+      class << self; attr_accessor :lockRefresh; end
+      def self.doRefresh(p)
+        if self.lockRefresh != 0
+          return
+        end
+        if !p.owner.nil? && p.owner.lockFlag
+          return
+        end
+
+        # Update the display immediately (sync actual screen with previous
+        # drawing/deleting methods).
+        # The 6 optional arguments can only be specified when the window is a
+        # pad created with newpad(). The additional parameters are needed to
+        # indicate what part of the pad and screen are involved. pminrow and
+        # pmincol specify the upper left-hand corner of the rectangle to be
+        # displayed in the pad. sminrow, smincol, smaxrow, and smaxcol specify
+        # the edges of the rectangle to be displayed on the screen. The lower
+        # right-hand corner of the rectangle to be displayed in the pad is
+        # calculated from the screen coordinates, since the rectangles must
+        # be the same size. Both rectangles must be entirely contained within
+        # their respective structures. Negative values of pminrow, pmincol,
+        # sminrow, or smincol are treated as if they were zero.
+        refresh # this is a call to ncurses?
+      end
+
   private
       def moveGrow( p, s, limits, minSize, maxSize, mode)
       end
@@ -1908,19 +2004,251 @@ module TVRuby::Views
       def change( uchar, delta, p, s, ctrlState )
       end
 
-      def exposedRec1(int, int, TView)
+      def exposedRec1(x1, x2, p, vars2)
+        loop do
+          p=p.next
+
+          if p==vars2['target']
+            return exposedRec2(x1, x2, p->owner, vars2)
+          end
+          if !(p.state & SfVisible) || vars2['y']<p.origin.y 
+            next
+          end
+
+          if vars2['y']<p.origin.y+p.size.y
+            if x1<p.origin.x
+              if x2<=p.origin.x
+                next
+              end
+              if x2>p.origin.x+p.size.x
+                if exposedRec1(x1, p->origin.x, p, vars2)
+                  return true
+                end
+                x1=p.origin.x+p.size.x
+              else
+                x2=p.origin.x
+              end
+            else
+              if x1<p.origin.x+p.size.x
+                x1=p.origin.x+p.size.x
+              end
+              if x1>=x2 
+                return false
+              end
+            end
+          end
+        end
       end
 
-      def exposedRec2(int, int, TView)
+      def exposedRec2(x1, x2, p, vars2)
+        if !(p.state & SfVisible)
+          return false
+        end
+        if !p.owner || p.owner.buffer
+          return true
+        end
+
+        saved = Hash.new(vars2)
+
+        vars2['y'] += p.origin.y
+        x1 += p.origin.x
+        x2 += p.origin.x
+        vars2['target'] = p
+
+        g = p.owner
+        if vars2['y']<g.clip.a.y || vars2['y'] >= g.clip.b.y
+          vars2.clear
+          vars2.merge(saved)
+          return false
+        end
+        if x1 < g.clip.a.x
+          x1 = g.clip.a.x
+        end
+        if x2 > g.clip.b.x
+          x2 = g.clip.b.x
+        end
+        if x1 >= x2
+          vars2.clear
+          vars2.merge(saved)
+          return false
+        end
+        retValue = exposedRec1(x1, x2, g.last, vars2)
+        vars2.clear
+        vars2.merge(saved)
+        return retValue
       end
 
-      def writeView(int, int, int, void )
+      def writeView(x1, x2, y, buf )
+        if y<0 || y>=@size.y
+          return
+        end
+        if x1<0
+          x1=0
+        end
+        if x2>@size.x
+          x2=@size.x
+        end
+        if x1>=x2
+          return
+        end
+
+        vars1 = {}
+        vars2 = {}
+        vars2['offset'] = x1
+        vars1['buf'] = buf
+        vars2['y'] = y
+        writeViewRec2( x1, x2, self, 0, vars1, vars2)
+        dorefresh(self)
       end
 
-      def writeViewRec1(int, int, TView, int)
+      def writeViewRec1(x1, x2, p, shadowCounter, vars1, vars2)
+        loop do
+          p=p.next
+          if p==vars2['target']
+            if p.owner.buffer
+              # SS: now we should remove the mouse pointer from the screen.  This is
+              # not necessary because we have a copy of the screen.
+              # 
+              # if (p->owner->buffer == TScreen::screenBuffer) TScreen::drawMouse(0);
+              if shadowCounter == 0
+                # SS: writes a row of data to the screen
+                if p.owner.buffer == TScreen.screenBuffer
+                  TScreen.writeRow(
+                    p.owner.size.x * vars2['y'] + x1,
+                    vars1['buf'] + (x1 - vars2['offset']),
+                    x2 - x1)
+
+                  i1 = p.owner.size.x*vars2['y']+x1
+                  i2 = x1-vars2['offset']
+                  len = x2-x1
+                  p.owner.buffer[i1..i1+len-1] = vars1['buf'][i2..i2+len-1]
+                else # paint with shadowAttr
+                  l = x2 - x1
+                  dst1 = p.owner.size.x * vars2['y'] + x1
+                  dst = dst1
+                  src = x1 - vars2['offset']
+                  while (l != 0)
+                    l -= 1
+                    d = vars1['buf'][src] & 0xff | (ShadowAttr << 8)
+                    src += 1
+
+                    # SS: writes a character on the screen
+                    if p.owner.buffer == TScreen.screenBuffer
+                      TScreen.writeRow(dst1, d, 1)
+                      dst1 += 1
+                    end
+                    p.owner.buffer[dst] = d
+                    dst += 1
+                  end
+                end
+              end
+              # SS: draws mouse pointer
+              if p->owner->buffer == TScreen.screenBuffer
+                TScreen.drawMouse(1)
+              end
+            end
+
+            if p.owner.lockFlag == 0
+              writeViewRec2(x1, x2, p.owner, shadowCounter,vars1,vars2)
+            end
+            return
+          end
+          if !(p.state & SfVisible) || vars2['y']<p.origin.y
+            next
+          end
+
+          if vars2['y']<p.origin.y+p.size.y
+            if x1<p.origin.x
+              if x2<=p.origin.x
+                next
+              end
+              writeViewRec1( x1, p.origin.x, p, shadowCounter, vars1, vars2)
+              x1=p.origin.x
+            end
+            if x2<=p.origin.x+p.size.x
+              return
+            end
+            if x1<p.origin.x+p.size.x
+              x1=p.origin.x+p.size.x;
+            end
+            if (p.state & SfShadow) && (vars2['y']>=p.origin.y+shadowSize.y)
+              if x1>=p.origin.x+p.size.x+shadowSize.x
+                next
+              else
+                shadowCounter+=1
+                if x2<=p.origin.x+p.size.x+shadowSize.x
+                  next
+                else
+                  writeViewRec1(x1, p.origin.x+p.size.x+shadowSize.x, p, shadowCounter, vars1, vars2)
+                  x1=p.origin.x+p.size.x+shadowSize.x
+                  shadowCounter-=1
+                  next
+                end
+              end
+            else
+              next
+            end
+          end
+          if (p.state & SfShadow) && (vars['y'] < p.origin.y+p.size.y+shadowSize.y)
+            if x1<p.origin.x+shadowSize.x
+              if x2<= p.origin.x+shadowSize.x
+                next
+              end
+              writeViewRec1(x1, p.origin.x+shadowSize.x, p, shadowCounter, vars1, vars2)
+              x1 = p.origin.x+shadowSize.x
+            end
+            if x1>=p.origin.x+shadowSize.x+p->size.x
+              next
+            end
+            shadowCounter+=1
+            if x2<=p.origin.x+p.size.x+shadowSize.x
+              next
+            else
+              writeViewRec1(x1, p->origin.x+p->size.x+shadowSize.x, p, shadowCounter, vars1, vars2)
+              x1=p.origin.x+p.size.x+shadowSize.x
+              shadowCounter-=1
+              next
+            end
+          else
+            next
+          end
+        end
       end
 
-      def writeViewRec2(int, int, TView, int)
+      def writeViewRec2(x1, x2, p, shadowCounter, vars1, vars2)
+        if !(p.state & SfVisible) || p.owner==0
+          return
+        end
+
+        saved = Hash.new(vars2)
+
+        vars2['y'] += p.origin.y
+        x1 += p.origin.x
+        x2 += p.origin.x
+        vars2['offset'] += p->origin.x
+        vars2['target']=p
+
+        g=p.owner
+        if vars2['y']<g.clip.a.y || vars2['y'] >= g.clip.b.y
+          vars2.clear
+          vars2.merge(saved)
+          return
+        end
+        if x1<g.clip.a.x 
+          x1 = g.clip.a.x
+        end
+        if x2>g.clip.b.x
+          x2 = g->clip.b.x
+        end
+        if x1>=x2
+          vars2.clear
+          vars2.merge(saved)
+          return
+        end
+
+        writeViewRec1(x1, x2, g.last, shadowCounter, vars1, vars2)
+        vars2.clear
+        vars2.merge(saved)
       end
   end
 
@@ -2003,7 +2331,80 @@ module TVRuby::Views
         attr_accessor :dragIcon
       end
   private
+      # Erklrung der Mask:
+      #
+      #       Bit 0
+      #         |
+      #   Bit 3 - - Bit 1
+      #         |
+      #       Bit 2
+      #
+      # Wenn z.B. sichergestellt werden soll, dass eine linke obere Ecke im
+      # Muster vorhanden ist, nimmt man :
+      #   mask |= 0x06 .
       def frameLine( frameBuf, y, n, color )
+        frameMask = []
+        frameMask[0]=@initFrame[n]
+
+        1.upto(@size.x-2) do |i|
+          frameMask[i] = @initFrame[n+1] 
+        end
+
+        frameMask[@size.x-1]=@initFrame[n+2]
+
+        p = owner.last
+        loop do
+          p=p.next
+          break if p == self
+          if (p.options & OfFramed) && (p.state & SfVisible)
+            mask1
+            mask2
+            if y+1<p->origin.y
+              next
+            elsif y+1==p.origin.y 
+              mask1=0x0A
+              mask2=0x06;
+            elsif y==p.origin.y+p.size.y
+              mask1=0x0A
+              mask2=0x03
+            elsif y<p.origin.y+p.size.y
+              mask1=0
+              mask2=0x05
+            else 
+              next
+            end
+            xMin=p.origin.x
+            xMax=p.origin.x+p.size.x
+
+            if xMin<1
+              xMin=1
+            end
+            if xMax>@size.x-1 
+              xMax=@size.x-1
+            end
+            if xMax>xMin
+              if mask1==0
+                frameMask[xMin-1] |= mask2
+                frameMask[xMax]   |= mask2
+              else
+                frameMask[xMin-1] |= mask2
+                frameMask[xMax]   |= (mask2 ^ mask1)
+                xMin.upto(xMax-1) do
+                  frameMask[i] |= mask1
+                end
+              end
+            end
+          end
+        end
+        dest=0
+        i=@size.x
+        i1=0
+        while i != 0
+          i-=1
+          frameBuf.data[dest] = (color << 8) + frameChars[frameMask[i1]]
+          dest++
+          i1+=1
+        end
       end
 
       def dragWindow( event, dragMode )
@@ -2705,6 +3106,26 @@ module TVRuby::Views
       # @ref remove().
       # 
       def removeView( p )
+        if @last
+          cur=@last
+          loop do
+            if p==cur.next
+              cur.next=p.next
+              if @last==p
+                if cur.next==p 
+                  @last=nil
+                else 
+                  @last=cur
+                end
+                break
+              end
+            end
+            if cur.next==@last
+              break
+            end
+            cur=cur.next
+          end
+        end
       end
 
       #
@@ -3016,6 +3437,60 @@ module TVRuby::Views
       end
 
       def resetCursor
+        if ( state & (SfVisible | SfCursorVis | SfFocused)
+            == (SfVisible | SfCursorVis | SfFocused) )
+          p = self
+          p2 = nil
+          g = nil
+          cur = cursor
+          loop do
+            if (!(cur.x>=0 && cur.x<p.size.x
+                && cur.y>=0 && cur.y<p.size.y))
+              break
+            end
+            cur.x += p->origin.x
+            cur.y += p->origin.y
+            p2 = p
+            g = p.owner
+            if g==0
+              #cursor setzen
+              # SS: we should change the cursor size according to the sfCursorIns
+              # flag in the state variable:
+              # 
+              # if (state & sfCursorIns) {
+              #     *     setBigCursor
+              #     * } else {
+              #     *     setSmallCursor
+              #     * }
+              # 
+              # Is there a way to do it under linux ?
+              # 
+              TScreen.moveCursor(cur.x, cur.y)
+              TScreen.drawCursor(1)
+              return
+            end
+            if !(g.state & SfVisible)
+              break
+            end
+            p=g.last
+            loop do
+              p=p.next
+              if p==p2
+                p=p.owner
+                next
+              end
+              if ((p.state & SfVisible) 
+                  && cur.x>=p.origin.x 
+                  && cur.x<p.size.x+p.origin.x
+                  && cur.y>=p.origin.y 
+                  && cur.y<p.size.y+p.origin.y)
+                break
+              end
+            end
+          end
+        end
+        # no cursor, please.
+        TScreen.drawCursor(0)
       end
 
       #
