@@ -493,12 +493,25 @@ module TVRuby::Colorsel
       # printed in the view.
       # 
       def initialize( bounds, aText )
+        super(bounds)
+        @color = 0
+        @text = String.new(aText)
       end
 
       #
       # Draws the view with given text and current color.
       # 
       def draw
+        c = color
+        if c == 0
+            c = @errorAttr
+        end
+        len = @text.length
+        b = TDrawBuffer.new
+        0.upto(size.x/len) do |i|
+            b.moveStr( i*len, text, c )
+        end
+        writeLine( 0, 0, size.x, size.y, b )
       end
 
       #
@@ -507,6 +520,17 @@ module TVRuby::Colorsel
       # broadcast events.
       # 
       def handleEvent( event )
+        TView.handleEvent( event )
+        if event.what == EvBroadcast
+          case event.message.command 
+          when CmColorBackgroundChanged
+            @color = (@color & 0x0F) | ((event.message.infoPtr << 4) & 0xF0)
+            drawView
+          when CmColorForegroundChanged
+            @color = (@color & 0xF0) | (event.message.infoPtr & 0x0F)
+            drawView
+          end
+        end
       end
 
       #
@@ -515,6 +539,9 @@ module TVRuby::Colorsel
       # @ref drawView().
       # 
       def setColor( aColor )
+        @color = aColor
+        message( owner, EvBroadcast, CmColorSet, @color )
+        drawView
       end
 
       #
@@ -547,7 +574,6 @@ module TVRuby::Colorsel
   # @short Implements a scrollable list of named color groups
   # 
   class TColorGroupList < TListViewer
-  public
       #
       # Constructor.
       # 
@@ -557,6 +583,15 @@ module TVRuby::Colorsel
       # @see TListViewer::TListViewer
       # 
       def initialize( bounds, aScrollBar, aGroups)
+        super(bounds, 1, 0, aScrollBar)
+        @group = aGroups
+
+        i = 0
+        while aGroups != 0
+          aGroups = aGroups.next
+          i+=1
+        end
+        setRange(i)
       end
 
       #
@@ -565,18 +600,70 @@ module TVRuby::Colorsel
       # @see TListViewer::focusItem
       # 
       def focusItem( item )
+        TListViewer.focusItem( item )
+        curGroup = groups
+
+        while( item > 0 )
+          item -= 1
+          curGroup = curGroup.next
+        end
+        message( owner, EvBroadcast, CmNewColorItem, curGroup)
       end
 
       #
       # Copies the group name corresponding to `item' to the `dest' string.
       # 
       def getText( dest, item, maxLen )
+        curGroup = groups
+        while( item > 0 )
+          item -= 1 
+          curGroup = curGroup.next
+        end
+        dest = String.new(curGroup.name)
       end
 
-      #
-      # Undocumented.
-      # 
       def handleEvent(event)
+        TListViewer.handleEvent(ev)
+        if ((ev.what == EvBroadcast) &&
+            (ev.message.command == CmSaveColorIndex))
+          setGroupIndex(focused, ev.message.infoPtr)
+        end
+      end
+
+      def setGroupIndex(groupNum, itemNum)
+        g = getGroup(groupNum)
+        if !g.nil?
+          g.index = itemNum
+        end
+      end
+
+      def getGroupIndex(groupNum)
+        g = getGroup(groupNum)
+        if g
+          return g.index
+        end
+        return nil
+      end
+
+      def getGroup(groupNum)
+        g = groups
+
+        while (groupNum != 0)
+          groupNum -= 1
+          g = g.next
+        end
+        return g
+      end
+
+      def getNumGroups
+        g = groups;
+
+        n=0
+        while !g.nil?
+          g = g.next
+          n += 1 
+        end
+        return n
       end
 
       #
@@ -605,8 +692,7 @@ module TVRuby::Colorsel
   # event handler.
   # @short Used to view and select single color items
   # 
-  class TColorItemList < public TListViewer
-  public
+  class TColorItemList < TListViewer
       #
       # Calls TListViewer constructor TListViewer(bounds, 1, 0, aScrollBar) to
       # create a single-column list viewer with a single vertical scroll bar.
@@ -615,6 +701,15 @@ module TVRuby::Colorsel
       # @ref range to the number of items.
       # 
       def initialize( bounds, aScrollBar, aItems)
+        super(bounds, 1, 0, aScrollBar)
+        @items = aItems
+        @eventMask |= EvBroadcast
+        i = 0
+        while aItems != 0
+          aItems = aItems.next
+          i += 1
+        end
+        setRange(i)
       end
 
       #
@@ -623,12 +718,27 @@ module TVRuby::Colorsel
       # @see TListViewer::focusItem
       # 
       def focusItem( item )
+        TListViewer.focusItem( item )
+        message(owner, EvBroadcast, CmSaveColorIndex, item)
+
+        curItem = items
+        while( item > 0 )
+          item -= 1
+          curItem = curItem.next
+        end
+        message( owner, EvBroadcast, CmNewColorIndex, curItem.index)
       end
 
       #
       # Copies the item name corresponding to `item' to the `dest' string.
       # 
-      def getText( dest, item, maxLen )
+      def getText( dest, item, maxChars )
+        curItem = items
+        while item > 0 
+          item -= 1
+          curItem = curItem.next
+        end
+        curItem.name = String.new(dest)
       end
 
       #
@@ -637,6 +747,24 @@ module TVRuby::Colorsel
       # redrawn.
       # 
       def handleEvent( event )
+        TListViewer.handleEvent( event )
+        if event.what == EvBroadcast 
+           g = event.message.infoPtr
+          curItem = nil
+          i = 0
+
+          case event.message.command
+          when CmNewColorItem
+            curItem = items = g.items
+              while curItem != 0
+                curItem = curItem.next
+                i++
+              end
+              setRange( i )
+              focusItem( g.index)
+              drawView
+          end
+        end
       end
 
       #
@@ -661,7 +789,6 @@ module TVRuby::Colorsel
   # @short Viewer used to examine and change the standard palette
   # 
   class TColorDialog < TDialog
-  public
       #
       # Constructor.
       # 
@@ -683,13 +810,66 @@ module TVRuby::Colorsel
       # See file `demo/tvdemo2.cc' for an example.
       # 
       def initialize( aPalette, aGroups )
+        super(TRect.new(0,0,79,18), @colors, TColorDialog.initFrame)
+        @options |= OfCentered
+
+        if !aPalette.nil?
+          @pal = TPalette.new(aPalette)
+        else
+          @pal = nil
+        end
+
+        @sb = TScrollBar.new(TRect.new( 27, 3, 28, 14 ))
+        insert( @sb )
+
+        @groups = TColorGroupList.new(TRect.new( 3, 3, 27, 14 ), @sb, aGroups)
+        insert( @groups )
+        insert( TLabel.new( TRect.new( 3, 2, 10, 3 ), @groupText, @groups ) )
+
+        @sb = TScrollBar.new( TRect.new( 59, 3, 60, 14 ) )
+        insert( @sb )
+
+        p = TColorItemList.new( TRect.new( 30, 3, 59, 14 ), @sb, aGroups.items )
+        insert( p )
+        insert( TLabel.new( TRect.new( 30, 2, 36, 3 ), @itemText, p ) )
+
+        @forSel = TColorSelector.new( TRect.new( 63, 3, 75, 7 ),
+            TColorSelector::CsForeground )
+        insert( @forSel )
+        @forLabel = TLabel.new( TRect.new( 63, 2, 75, 3 ), @forText, @forSel )
+        insert( forLabel )
+
+        @bakSel = TColorSelector.new( TRect.new( 63, 9, 75, 11 ),
+            TColorSelector::CsBackground )
+        insert( @bakSel )
+        @bakLabel = TLabel.new( TRect.new( 63, 8, 75, 9 ), @bakText, @bakSel )
+        insert( @bakLabel )
+
+        @display = TColorDisplay.new( TRect.new( 62, 12, 76, 14 ), @textText )
+        insert( @display )
+
+        @monoSel = TMonoSelector.new( TRect.new( 62, 3, 77, 7 ) )
+        @monoSel.hide
+        insert( @monoSel )
+        @monoLabel = TLabel.new( TRect.new( 62, 2, 69, 3 ), @colorText, @monoSel )
+        @monoLabel.hide
+        insert( @monoLabel )
+
+        insert( TButton.new( TRect.new( 51, 15, 61, 17 ), okText, CmOK, BfDefault ) )
+        insert( TButton.new( TRect.new( 63, 15, 73, 17 ), cancelText, CmCancel, BfNormal ) )
+        selectNext( false )
+
+        if @pal != 0 
+            setData( @pal )
+        end
       end
 
       #
       # By default, dataSize() returns the size of the current palette,
       # expressed in bytes.
       # 
-      def dataSiz
+      def dataSize
+        @pal.data + 1
       end
 
       #
@@ -701,6 +881,8 @@ module TVRuby::Colorsel
       # @see setData
       # 
       def getData( rec )
+        getIndexes(@colorIndexes)
+        rec = @pal.dup
       end
 
       #
@@ -708,6 +890,13 @@ module TVRuby::Colorsel
       # generated is cmNewColorIndex.
       #  
       def handleEvent( event )
+        if event.what==EvBroadcast && event.message.command==CmNewColorItem 
+          @groupIndex = @groups.focused
+        end
+        TDialog.handleEvent( event )
+        if event.what==EvBroadcast && event.message.command==CmNewColorIndex 
+          display.setColor( @pal.data[event.message.infoPtr] )
+        end
       end
 
       #
@@ -718,6 +907,48 @@ module TVRuby::Colorsel
       # @ref TPalette object.
       # 
       def setData(rec)
+        @pal = rec.dup
+
+        setIndexes(colorIndexes)
+        display.setColor(pal.data[@groups.getGroupIndex(@groupIndex)])
+        @groups.focusItem( @groupIndex)
+        if showMarkers 
+            forLabel.hide
+            forSel.hide
+            bakLabel.hide
+            bakSel.hide
+            monoLabel.show
+            monoSel.show
+        end
+        @groups.select
+      end
+
+      def getIndexes ( colIdx )
+        n = @groups.getNumGroups
+        if (!colIdx || colIdx == 0)
+          colIdx = TColorIndex.new
+          colIdx.colorSize = n
+        end
+        colIdx.groupIndex = groupIndex
+        0.upto(n-1) do |index|
+          colIdx.colorIndex[index] = @groups.getGroupIndex(index)
+        end
+      end
+
+      def setIndexes
+        numGroups = @groups.getNumGroups
+        if @colIdx && @colIdx.colorSize != numGroups
+          @colIdx = nil
+        end
+        if !@colIdx
+            @colIdx =  TColorIndex.new
+            @colIdx.colorSize = numGroups
+        end
+        0.upto(numGroups-1) do |index|
+          @groups.setGroupIndex(index, colIdx.colorIndex[index])
+        end
+
+        groupIndex = colIdx.groupIndex
       end
 
       #

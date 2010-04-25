@@ -1139,7 +1139,7 @@ module TVRuby::Editors
       # The default editorDialog, @ref defEditorDialog(), simply returns
       # cmCancel.
       # 
-      @editorDialog
+      @editorDialog = Proc.new { CmCancel  }
       class << self; attr_accessor :editorDialog; end
 
       # 
@@ -1158,19 +1158,19 @@ module TVRuby::Editors
       # 
       # The default value is @ref efBackupFiles | @ref efPromptOnReplace.
       # 
-      @editorFlags
+      @editorFlags = EfBackupFiles | EfPromptOnReplace
       class << self; attr_accessor :editorFlags; end
 
       # 
       # Stores the last string value used for a find operation.
       # 
-      @findStr
+      @findStr = ''
       class << self; attr_accessor :findStr; end
 
       # 
       # Stores the last string value of a replace operation.
       # 
-      @replaceStr
+      @replaceStr = ''
       class << self; attr_accessor :replaceStr; end
 
       # 
@@ -1180,7 +1180,7 @@ module TVRuby::Editors
       # variable. The clipboard should not support undo (i.e., its @ref canUndo
       # should be false).
       # 
-      @clipboard
+      @clipboard = nil
       class << self; attr_accessor :clipboard; end
 
       # 

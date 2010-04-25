@@ -12,6 +12,9 @@ module TVRuby::Stddlg
   CmFileFocused = 102    # A new file was focused in the TFileList
   CmFileDoubleClicked = 103    # A file was selected in the TFileList
 
+  Ftime = Struct.new(:ft_tsec, :ft_min, :ft_hour, :ft_day, :ft_month, :ft_year)
+  TSearchRec = Struct.new(:attr, :time, :size, :name)
+
   #
   # TFileInputLine implements a specialized @ref TInputLine allowing the input
   # and editing of file names, including optional paths and wild cards.
@@ -29,6 +32,8 @@ module TVRuby::Stddlg
       # @ref evBroadcast flag is set in the @ref eventMask.
       # 
       def initialize( bounds, aMaxLen )
+        super(bounds, aMaxLen)
+        @eventMask |= EvBroadcast
       end
 
       #
@@ -40,6 +45,30 @@ module TVRuby::Stddlg
       # @ref TFileDialog object is appended first.
       # 
       def handleEvent( event )
+        TInputLine.handleEvent(event)
+        if (event.what == EvBroadcast &&
+            event.message.command == CmFileFocused &&
+            !(@state & SfSelected))
+          # Prevents incorrect display in the input line if wildCard has
+          # already been expanded.
+          if event.message.infoPtr.attr & FA_DIREC) != 0
+            data = String.new(owner.wildCard)
+            if !data.index(':') && !data.index('/')
+              data = event.message.infoPtr.name+'/'+owner.wildCard
+            else
+              # Insert "<name>\\" between last name or wildcard and last '/'
+              TVRuby::System.fexpand(data)    # Ensure complete expansion to begin with
+
+              tmp = data.rindex('/')
+              nm = event.message.infoPtr.name
+              data = data[0..tmp]+nm+'/'+data[tmp+1..-1]
+              TVRuby::System.fexpand(data);    # Expand again incase it was '..'.
+            end
+          else
+            data = String.new(event.message.infoPtr.name)
+          end
+          drawView()
+        end
       end
   end
 
@@ -50,7 +79,10 @@ module TVRuby::Stddlg
   # @short A base for other list box classes
   # 
   class TSortedListBox < TListBox
-  public
+      def self.equal(s1, s2, count)
+        return s1[0..count-1].downcase == s2[0..count-1].downcase
+      end
+
       # 
       # Calls @ref TListBox constructor to create a list box with the given
       # size `bounds', number of columns `aNumCols', and vertical scroll bar
@@ -61,6 +93,11 @@ module TVRuby::Stddlg
       # first item.
       # 
       def initialize( bounds, aNumCols, aScrollBar)
+        super(bounds, aNumCols, aScrollBar)
+        @shiftState = 0
+        @searchPos = -1
+        showCursor()
+        setCursor(1, 0)
       end
 
       # 
@@ -68,6 +105,78 @@ module TVRuby::Stddlg
       # mouse events used to select items from the list.
       # 
       def handleEvent( event )
+        curString = ' '*255
+        newString = ' '*255
+        oldValue = 0
+
+        oldValue = focused
+        TListBox.handleEvent( event )
+
+        if (oldValue != focused ||
+           (event.what == EvBroadcast &&
+            event.message.command == CmReleasedFocus))
+            searchPos = -1
+        end
+        if event.what == EvKeyDown
+            if event.keyDown.charScan.charCode.ord != 0
+                value = focused
+                if value < range 
+                    getText( curString, value, 255 )
+                else
+                    curString = ''
+                end
+                oldPos = searchPos
+                if event.keyDown.keyCode == KbBack
+                    if searchPos == -1
+                        return
+                    end
+                    searchPos -= 1
+                    if searchPos == -1
+                      shiftState = event.keyDown.controlKeyState
+                    end
+                    curString.slice!(searchPos..-1)
+                elsif (event.keyDown.charScan.charCode == '.')
+                    loc = curString.index('.')
+                    if loc.nil?
+                        searchPos = -1
+                    else
+                        searchPos = loc
+                    end
+                else
+                    searchPos += 1
+                    if searchPos == 0
+                      shiftState = event.keyDown.controlKeyState
+                    end
+                    curString[searchPos] = event.keyDown.charScan.charCode
+                    curString.slice!(searchPos..-1)
+                end
+                k = getKey(curString)
+
+                c = value
+                list().search( k, c )
+                value = c
+
+                if value < range
+                  getText(newString, value, 255 )
+                  if equal(curString, newString, searchPos+1)
+                      if( value != oldValue )
+                          focusItem( value )
+                          setCursor( cursor.x+searchPos+1, cursor.y )
+                      else
+                          setCursor(cursor.x+(searchPos-oldPos), cursor.y )
+                      end
+                  else
+                      searchPos = oldPos
+                  end
+                else
+                    searchPos = oldPos
+                end
+                if (searchPos != oldPos ||
+                   event.keyDown.charScan.charCode.match(/^[a-z]$/i))
+                  clearEvent(event)
+                end
+            end
+        end
       end
 
       #
@@ -78,6 +187,9 @@ module TVRuby::Stddlg
       # The first item of the new collection will receive the focus.
       # 
       def newList( aList )
+        l = TListBox.newList(aList)
+        @searchPos = -1
+        return l
       end
 
       # 
@@ -105,6 +217,7 @@ module TVRuby::Stddlg
       # default, getKey() returns `s'.
       # 
       def getKey( s )
+        s
       end
 
       attr_accessor :searchPos
@@ -231,6 +344,9 @@ module TVRuby::Stddlg
       # @ref evBroadcast flag is set in @ref TView::eventMask.
       # 
       def initialize( bounds )
+        super(bounds)
+        @eventMask |= EvBroadcast
+        @file_block = nil
       end
 
       #
@@ -238,12 +354,76 @@ module TVRuby::Stddlg
       # date/time stamp are displayed.
       # 
       def draw
+        pm = false
+        b = TDrawBuffer.new
+        color = 0
+
+        # Prevents incorrect directory name display in info pane if wildCard
+        # has already been expanded.
+        path = String.new(owner.wildCard)
+        if !path.index(':') && !path.index('/')
+          path = owner.directory+owner.wildCard
+          TVRuby::System.fexpand( path )
+        end
+
+        color = getColor(0x01)
+        b.moveChar( 0, ' ', color, size.x )
+        b.moveStr( 1, path, color )
+        writeLine( 0, 0, size.x, 1, b )
+
+        b.moveChar( 0, ' ', color, size.x )
+        b.moveStr(1, @file_block.name, color )
+
+        if @file_block.name
+          buf = sprintf('%ld', @file_block.size)
+          b.moveStr( 14, buf, color )
+
+          time = @file_block.time
+          b.moveStr( 5, months[time.ft_month], color )
+
+          buf = sprintf('%02d', time.ft_day)
+          b.moveStr( 29, buf, color )
+
+          b.putChar( 31, ',' )
+
+          buf = sprintf('%d', time.ft_year+1980)
+          b.moveStr( 32, buf, color )
+
+          pm = time.ft_hour >= 12
+          time.ft_hour %= 12
+
+          if time.ft_hour == 0
+            time.ft_hour = 12
+          end
+
+          buf = sprintf('%02d', time.ft_hour)
+          b.moveStr( 38, buf, color)
+          b.putChar( 40, ':' )
+
+          buf = sprintf('%02d', time.ft_min)
+          b.moveStr( 41, buf, color )
+
+          if pm && pm != 0
+              b.moveStr( 43, pmText, color )
+          else
+              b.moveStr( 43, amText, color )
+          end
+        end
+
+        writeLine(0, 1, size.x, 1, b )
+        b.moveChar( 0, ' ', color, size.x )
+        writeLine( 0, 2, (ushort) size.x, size.y-2, b)
       end
+
+
+      @palette = TPalette.new(cpInfoPane)
+      class << self; attr_accessor :palette; end
 
       #
       # Returns the default palette.
       # 
       def getPalette
+        return palette
       end
 
       #
@@ -252,6 +432,11 @@ module TVRuby::Stddlg
       # displaying the file information pane.
       # 
       def handleEvent( event )
+        TView.handleEvent(event)
+        if event.what == EvBroadcast && event.message.command == CmFileFocused
+          @file_block = event.message.infoPtr
+          drawView()
+        end
       end
 
       #

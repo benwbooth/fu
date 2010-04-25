@@ -112,7 +112,38 @@ module TVRuby::Menus
       # @see TMenuItem::TMenuItem
       # 
       def initialize(nm, key, helpCtx = HcNoContext )
+        super(nm, 0, key, helpCtx)
       end
+
+    def + ( s1, s2 )
+      if s2.is_a? TMenuItem
+        sub = s1
+        while !sub.next.nil?
+          sub = sub.next
+        end
+
+        if sub.subMenu.nil?
+          sub.subMenu = TMenu.new( s2 )
+        else
+          cur = sub.subMenu.items
+          while !cur.next.nil?
+            cur = cur.next
+          end
+          cur.next = s2
+        end
+        return s1
+      elsif s2.is_a? TSubMenu
+        cur = s1
+        while !cur.next.nil?
+          cur = cur.next
+        end
+        cur.next = s2
+        return s1
+      else
+        raise ArgumentError
+      end
+    end
+
   end
 
   #
@@ -512,6 +543,32 @@ module TVRuby::Menus
         @min = aMin
         @max = aMax
         @items = someItems
+      end
+
+      def + (s1, s2)
+        if s2.is_a? TStatusItem
+          def_ = s1
+          while !def_.next.nil?
+            def_ = def_->next
+          end
+          if def_.items.nil?
+            def_.items = s2
+          else
+            cur = def_.items
+            while !cur.next.nil?
+              cur = cur.next
+            end
+            cur.next = s2
+          end
+          return s1
+        elsif s2.is_a? TStatusDef
+          cur = s1
+          while !cur.next.nil?
+            cur = cur.next
+          end
+          cur.next = s2
+          return s1
+        end
       end
 
       #

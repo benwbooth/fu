@@ -1,4 +1,30 @@
 module TVRuby::Msgbox
+  @buttonName = [
+    TVRuby::MsgBoxText::yesText,
+    TVRuby::MsgBoxText::noText,
+    TVRuby::MsgBoxText::okText,
+    TVRuby::MsgBoxText::cancelText
+  ]
+
+  @commands = [
+    CmYes,
+    CmNo,
+    CmOK,
+    CmCancel
+  ]
+
+  @titles = [
+    TVRuby::MsgBoxText::warningText,
+    TVRuby::MsgBoxText::errorText,
+    TVRuby::MsgBoxText::informationText,
+    TVRuby::MsgBoxText::confirmText
+  ]
+
+  class << self
+    attr_accessor :buttonName
+    attr_accessor :commands
+    attr_accessor :titles
+  end
 
   #  \fn messageBox( const char *msg, ushort aOptions )
   # Displays a message box with the given string in `msg'. `aOptions' is a
@@ -30,6 +56,7 @@ module TVRuby::Msgbox
   # </pre>
   # 
   def self.messageBox( msg, aOptions )
+    return messageBoxRect(TRect.makeRect(), msg, aOptions)
   end
 
   # \fn messageBox( unsigned aOptions, const char *msg, ... )
@@ -46,6 +73,36 @@ module TVRuby::Msgbox
   # defined for @ref messageBox().
   # 
   def self.messageBoxRect( r, msg, aOptions )
+    buttonList = []
+
+    dialog = TDialog.new( r, titles[aOptions & 0x3] )
+    dialog.insert(
+        TStaticText.new(
+          TRect.new(3, 2, dialog.size.x - 2, dialog.size.y - 3), msg))
+
+    i = 0
+    x = -2
+    buttonCount = 0
+    while i < 4
+      if (aOptions & (0x0100 << i)) != 0
+        buttonList[buttonCount] =
+          TButton.new(TRect.new(0, 0, 10, 2), buttonName[i], commands[i], bfNormal )
+        x += buttonList[buttonCount++].size.x + 2
+      end
+      i += 1
+    end
+
+    x = (dialog.size.x - x) / 2
+
+    0.upto(buttonCount-1) do |i|
+      dialog.insert(buttonList[i])
+      buttonList[i].moveTo(x, dialog.size.y - 3)
+      x += buttonList[i].size.x + 2
+    end
+
+    dialog.selectNext(false)
+    ccode = TProgram.application.execView(dialog)
+    return ccode
   end
 
   # \fn messageBoxRect( const TRect &r, ushort aOptions, const char *msg, ... )
@@ -61,6 +118,10 @@ module TVRuby::Msgbox
   # Accepts input to string `s' with a maximum of `limit' characters.
   # 
   def self.inputBox( title, aLabel, s, limit )
+    r = TRect.new(0, 0, 60, 8)
+    r.move((TProgram.deskTop.size.x - r.b.x) / 2,
+           (TProgram.deskTop.size.y - r.b.y) / 2)
+    return inputBoxRect(r, title, aLabel, s, limit)
   end
 
   # \fn inputBoxRect( const TRect &bounds, const char *title, const char *aLabel, char *s, uchar limit )
@@ -69,6 +130,32 @@ module TVRuby::Msgbox
   # characters.
   # 
   def self.inputBoxRect( bounds, title, aLabel, s, limit )
+    dialog = TDialog.new(bounds, title)
+
+    r = TRect.new( 4 + aLabel.length, 2, dialog.size.x - 3, 3 )
+    control = TInputLine.new( r, limit )
+    dialog.insert( control )
+
+    r = TRect.new(2, 2, 3 + aLabel.length, 3)
+    dialog.insert( TLabel.new( r, aLabel, control ) )
+
+    r = TRect.new( dialog.size.x - 24, dialog.size.y - 4,
+                   dialog.size.x - 14, dialog.size.y - 2)
+    dialog.insert(TButton.new(r, MsgBoxText.okText, CmOK, BfDefault))
+
+    r.a.x += 12
+    r.b.x += 12
+    dialog.insert( TButton.new(r, MsgBoxText.cancelText, CmCancel, BfNormal))
+
+    r.a.x += 12
+    r.b.x += 12
+    dialog.selectNext(false)
+    dialog.setData(s)
+    c = TProgram.application.execView(dialog)
+    if c != CmCancel
+      dialog.getData(s)
+    end
+    return c
   end
 
   #  Message box classes

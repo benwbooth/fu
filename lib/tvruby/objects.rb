@@ -87,7 +87,13 @@ module TVRuby::Objects
   # @short Screen rectangular area
   # 
   class TRect
-  public
+      def self.makeRect
+        r = TRect.new( 0, 0, 40, 9 )
+        r.move((TProgram.deskTop.size.x - r.b.x) / 2,
+               (TProgram.deskTop.size.y - r.b.y) / 2)
+        return r
+      end
+
       #
       # Constructor.
       # 

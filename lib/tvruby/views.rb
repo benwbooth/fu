@@ -720,13 +720,18 @@ module TVRuby::Views
       # Creates a new palette by copying the palette `tp'.
       # 
       def initialize( d, len )
-        tp = d if d.is_a? TPalette
+        if d.is_a? TPalette
+          @data = Array.new(d.data)
+        elsif d.is_a? String
+          @data = Array.new(d.split('').map {|n| n.ord} )
+        end
       end
 
       #
       # The code p = tp; copies the palette `tp' to the palette `p'.
       # 
       def = ( tp )
+        @data = Array.new(tp.data)
       end
 
       #
@@ -734,6 +739,7 @@ module TVRuby::Views
       # position.
       # 
       def [] ( index )
+        return @data[index]
       end
   end
 
@@ -1367,7 +1373,26 @@ module TVRuby::Views
       # If `color' is invalid (for example, out of range) for any of the
       # palettes encountered in the chain, mapColor() returns @ref errorAttr.
       # 
-      def mapColor( uchar )
+      def mapColor( color )
+        if color == 0
+          return errorAttr
+        end
+        cur = self
+        begin
+          p = cur.getPalette
+          if !p[0].nil?
+            if color > p[0]
+              return errorAttr
+            end
+            color = p[color]
+            if color == 0
+              return errorAttr
+            end
+            cur = cur.owner
+          end
+        end while !cur.nil?
+
+        return color
       end
 
       #
@@ -1995,6 +2020,23 @@ module TVRuby::Views
         # their respective structures. Negative values of pminrow, pmincol,
         # sminrow, or smincol are treated as if they were zero.
         refresh # this is a call to ncurses?
+      end
+
+      def self.message(receiver, what, command, infoPtr)
+        if receiver.nil?
+          return nil
+        end
+
+        event = TEvent.new
+        event.what = what
+        event.message.command = command
+        event.message.infoPtr = infoPtr
+        receiver.handleEvent( event )
+        if event.what == EvNothing
+          return event.message.infoPtr
+        else
+          return nil
+        end
       end
 
   private
@@ -3198,6 +3240,18 @@ module TVRuby::Views
       # </pre>
       # 
       def firstThat( func, args )
+        temp = @last
+        if temp.nil?
+          return nil
+        end
+
+        begin
+          temp = temp.next
+          if func.call(temp, args)
+            return temp
+          end
+        end while temp != @last
+        return nil 
       end
 
       def focusNext(forwards)
@@ -3226,6 +3280,18 @@ module TVRuby::Views
       # </pre>
       # 
       def forEach( func, args )
+        term = @last
+        temp = @last
+        if temp.nil?
+          return
+        end
+
+        next_ = temp.next
+        begin
+          temp = next_
+          next_ = temp.next
+          func.call(temp, args)
+        end while temp != term
       end
 
       #
@@ -3262,6 +3328,12 @@ module TVRuby::Views
       # Returns a pointer to the subview at `index' position in Z-order.
       # 
       def at( index )
+        temp = @last
+        while index > 0
+          temp = temp.next
+          index -= 1
+        end
+        return temp
       end
 
       # 
@@ -3275,6 +3347,22 @@ module TVRuby::Views
       # Returns the Z-order position (index) of the subview `p'.
       # 
       def indexOf( p )
+        if @last.nil?
+          return nil
+        end
+
+        index = 0
+        temp = @last
+        begin
+          index += 1
+          temp = temp.next
+        end while temp != p && temp != @last
+
+        if temp != p
+          return nil
+        else
+          return index
+        end
       end
 
       #

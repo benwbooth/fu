@@ -107,7 +107,6 @@ module TVRuby::Dialogs
   # @short A non-growable child of TWindow, usually used as a modal view
   # 
   class TDialog < TWindow
-  public
       #
       # Creates a dialog box with the given size and title by calling
       # TWindow::TWindow(bounds, aTitle, wnNoNumber) and
@@ -126,7 +125,7 @@ module TVRuby::Dialogs
       # @ref TGroup, and @ref TView.
       # @see TWindow::~TWindow
       # 
-      def initialize( bounds, aTitle )
+      def initialize( bounds, aTitle, frame)
       end
 
       #
