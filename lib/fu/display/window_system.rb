@@ -1,4 +1,4 @@
-require 'qbedit/display/canvas'
+require 'fu/display/canvas'
 
 class Window
   attr_accessor :pref_dim
@@ -194,8 +194,8 @@ class WindowSystem
 end
 
 if __FILE__ == $0
-  require 'qbedit/display/main_loop'
-  require 'qbedit/display/curses_display'
+  require 'fu/display/main_loop'
+  require 'fu/display/curses_display'
   w=WindowSystem.new
   # screen = CursesDisplay::Screen.new
   # screen.start

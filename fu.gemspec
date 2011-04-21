@@ -1,7 +1,7 @@
 # -*- encoding: utf-8 -*-
 
 Gem::Specification.new do |s|
-  s.name = %q{qbedit}
+  s.name = %q{fu}
   s.version = "0.0.1"
 
   s.required_rubygems_version = Gem::Requirement.new(">= 0") if s.respond_to? :required_rubygems_version=
@@ -18,18 +18,18 @@ Gem::Specification.new do |s|
      "LICENSE",
      "README.rdoc",
      "Rakefile",
-     "lib/qbedit.rb",
-     "test/qbedit_test.rb",
+     "lib/fu.rb",
+     "test/fu.rb",
      "test/test_helper.rb"
   ]
   s.has_rdoc = true
-  s.homepage = %q{http://github.com/benbooth5/qbedit}
+  s.homepage = %q{http://github.com/benbooth5/fu}
   s.rdoc_options = ["--charset=UTF-8"]
   s.require_paths = ["lib"]
   s.rubygems_version = %q{1.3.1}
   s.summary = %q{TODO}
   s.test_files = [
-    "test/qbedit_test.rb",
+    "test/fu.rb",
      "test/test_helper.rb"
   ]
 

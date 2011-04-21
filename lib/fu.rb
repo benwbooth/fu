@@ -1,12 +1,12 @@
 #!/usr/bin/ruby1.9.1
 
 require 'rubygems'
-require 'ncurses'
+require 'ncursesw'
 require 'optparse'
 
-require 'qbedit/display/raw_display'
+require 'fu/display/raw_display'
 
-class Qbedit
+class Fu
   def initialize
   end
   def command_line
@@ -19,17 +19,17 @@ end
 
 begin
   # instantiate main object
-  qbedit = Qbedit.new
-  qbedit.command_line
+  fu = Fu.new
+  fu.command_line
 
   # perform screen initialization
   scr = Ncurses.initscr
   Ncurses.raw
   Ncurses.noecho
   Ncurses.keypad(scr, true)
-  qbedit.demo
+  fu.demo
   # start main event loop
-  qbedit.event_loop
+  fu.event_loop
 ensure
   # restore screen
   Ncurses.echo

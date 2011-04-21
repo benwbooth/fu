@@ -1,7 +1,7 @@
 # encoding: utf-8
 $VERBOSE=true
 
-require 'qbedit/display/util'
+require 'fu/display/util'
 
 module Escape
 

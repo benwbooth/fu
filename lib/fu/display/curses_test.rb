@@ -1,4 +1,4 @@
-require 'ncurses.rb'
+require 'ncursesw'
 
 module Test
   def self.mytest()

@@ -19,7 +19,7 @@
 #
 # Urwid web site: http://excess.org/urwid/
 
-require 'qbedit/display/util'
+require 'fu/display/util'
 
 $VERBOSE=true
 module MainLoop

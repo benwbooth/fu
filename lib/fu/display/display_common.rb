@@ -1,7 +1,7 @@
 $VERBOSE=true
 require 'termios'
-require 'qbedit/display/util'
-require 'qbedit/display/colors'
+require 'fu/display/util'
+require 'fu/display/colors'
 
 module DisplayCommon
 

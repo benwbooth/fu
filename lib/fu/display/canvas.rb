@@ -1,5 +1,5 @@
 require 'stringio'
-require 'qbedit/display/display_common'
+require 'fu/display/display_common'
 
 class Canvas
   attr_accessor :content
@@ -493,13 +493,13 @@ if __FILE__ == $0
   c.draw('*a*bcdefg')
   p c.content
 
-  require 'qbedit/display/curses_display'
+  require 'fu/display/curses_display'
   rd = CursesDisplay::Screen.new
   rd.start
   rd.draw_screen(c.rowcol, c)
   #rd.stop
 
-  # require 'qbedit/display/raw_display'
+  # require 'fu/display/raw_display'
   # p out.string
   # out = StringIO.new
   # rd = RawDisplay::Screen.new(out)

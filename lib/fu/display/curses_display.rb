@@ -2,10 +2,10 @@
 
 $VERBOSE=true
 require 'ncurses'
-require 'qbedit/display/str_util'
-require 'qbedit/display/util'
-require 'qbedit/display/escape'
-require 'qbedit/display/display_common'
+require 'fu/display/str_util'
+require 'fu/display/util'
+require 'fu/display/escape'
+require 'fu/display/display_common'
 
 # TODO: use init_color and can_change_color? to change color palette values
 # on supporting terminals
